@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF 吉他六线谱转换器</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', 'PingFang SC', sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 48px 16px;
+    }
+
+    h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+      background: linear-gradient(135deg, #a78bfa, #60a5fa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle {
+      color: #64748b;
+      font-size: 0.95rem;
+      margin-bottom: 40px;
+    }
+
+    .card {
+      background: #1e2130;
+      border: 1px solid #2d3148;
+      border-radius: 16px;
+      padding: 36px;
+      width: 100%;
+      max-width: 560px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+
+    /* ── 拖拽区域 ── */
+    #drop-zone {
+      border: 2px dashed #3d4268;
+      border-radius: 12px;
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+    }
+    #drop-zone.drag-over {
+      border-color: #a78bfa;
+      background: rgba(167,139,250,0.06);
+    }
+    #drop-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+    .drop-icon {
+      font-size: 2.5rem;
+      margin-bottom: 12px;
+    }
+    .drop-label {
+      font-size: 1rem;
+      color: #94a3b8;
+    }
+    .drop-label span {
+      color: #a78bfa;
+      font-weight: 600;
+    }
+    #file-name {
+      margin-top: 10px;
+      font-size: 0.85rem;
+      color: #60a5fa;
+      min-height: 20px;
+    }
+
+    /* ── 参数行 ── */
+    .params {
+      display: flex;
+      gap: 16px;
+      margin-top: 24px;
+    }
+    .param-group {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    label {
+      font-size: 0.8rem;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    input[type="text"], input[type="number"] {
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      color: #e2e8f0;
+      padding: 8px 12px;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.2s;
+      width: 100%;
+    }
+    input:focus { border-color: #a78bfa; }
+
+    /* ── 转换按钮 ── */
+    #convert-btn {
+      margin-top: 24px;
+      width: 100%;
+      padding: 13px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #7c3aed, #2563eb);
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    #convert-btn:hover:not(:disabled) { opacity: 0.88; }
+    #convert-btn:active:not(:disabled) { transform: scale(0.98); }
+    #convert-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* ── 进度区域 ── */
+    #progress-area {
+      margin-top: 24px;
+      display: none;
+    }
+    .progress-bar-wrap {
+      background: #0f1117;
+      border-radius: 99px;
+      height: 6px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    .progress-bar {
+      height: 100%;
+      border-radius: 99px;
+      background: linear-gradient(90deg, #7c3aed, #60a5fa);
+      width: 0%;
+      transition: width 0.4s ease;
+    }
+    .progress-bar.indeterminate {
+      width: 40%;
+      animation: slide 1.2s ease-in-out infinite;
+    }
+    @keyframes slide {
+      0%   { margin-left: -40%; }
+      100% { margin-left: 100%; }
+    }
+    #status-text {
+      font-size: 0.88rem;
+      color: #94a3b8;
+      text-align: center;
+    }
+
+    /* ── 结果区域 ── */
+    #result-area {
+      margin-top: 24px;
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .result-title {
+      font-size: 0.85rem;
+      color: #64748b;
+      text-align: center;
+    }
+    .download-btns {
+      display: flex;
+      gap: 12px;
+    }
+    .dl-btn {
+      flex: 1;
+      padding: 11px;
+      border-radius: 10px;
+      border: 1px solid;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+      transition: background 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .dl-btn.primary {
+      background: rgba(124,58,237,0.15);
+      border-color: #7c3aed;
+      color: #a78bfa;
+    }
+    .dl-btn.primary:hover { background: rgba(124,58,237,0.28); }
+    .dl-btn.secondary {
+      background: rgba(37,99,235,0.1);
+      border-color: #2563eb;
+      color: #60a5fa;
+    }
+    .dl-btn.secondary:hover { background: rgba(37,99,235,0.22); }
+
+    /* ── 错误 ── */
+    #error-area {
+      margin-top: 16px;
+      display: none;
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-size: 0.88rem;
+      color: #fca5a5;
+    }
+
+    /* ── 重置按钮 ── */
+    #reset-btn {
+      margin-top: 8px;
+      background: none;
+      border: none;
+      color: #64748b;
+      font-size: 0.85rem;
+      cursor: pointer;
+      text-decoration: underline;
+      display: none;
+    }
+    #reset-btn:hover { color: #94a3b8; }
+
+    footer {
+      margin-top: 40px;
+      font-size: 0.78rem;
+      color: #334155;
+    }
+    footer a { color: #475569; text-decoration: none; }
+    footer a:hover { color: #64748b; }
+  </style>
+</head>
+<body>
+
+  <h1>🎸 六线谱转换器</h1>
+  <p class="subtitle">上传 PDF 吉他六线谱，导出 MusicXML / ASCII Tab</p>
+
+  <div class="card">
+
+    <!-- 拖拽上传 -->
+    <div id="drop-zone">
+      <input type="file" id="file-input" accept=".pdf" />
+      <div class="drop-icon">📄</div>
+      <div class="drop-label">拖拽 PDF 到此处，或 <span>点击选择文件</span></div>
+      <div id="file-name"></div>
+    </div>
+
+    <!-- 参数 -->
+    <div class="params">
+      <div class="param-group">
+        <label for="title-input">曲目标题</label>
+        <input type="text" id="title-input" placeholder="留空则从文件名提取" />
+      </div>
+      <div class="param-group" style="max-width:110px">
+        <label for="tempo-input">速度 BPM</label>
+        <input type="number" id="tempo-input" value="100" min="20" max="300" />
+      </div>
+    </div>
+
+    <!-- 转换按钮 -->
+    <button id="convert-btn" disabled>选择文件后开始转换</button>
+
+    <!-- 进度 -->
+    <div id="progress-area">
+      <div class="progress-bar-wrap">
+        <div class="progress-bar indeterminate" id="progress-bar"></div>
+      </div>
+      <div id="status-text">正在解析中，请稍候…</div>
+    </div>
+
+    <!-- 结果 -->
+    <div id="result-area">
+      <div class="result-title">✅ 转换完成，选择下载格式</div>
+      <div class="download-btns">
+        <button class="dl-btn primary" id="dl-musicxml">🎼 MusicXML</button>
+        <button class="dl-btn secondary" id="dl-ascii">📝 ASCII Tab</button>
+      </div>
+    </div>
+
+    <!-- 错误 -->
+    <div id="error-area"></div>
+
+    <!-- 重置 -->
+    <button id="reset-btn">重新上传</button>
+
+  </div>
+
+  <footer>
+    <a href="https://github.com/Treoustrasza/pdf-guitar-tab-parser" target="_blank">
+      GitHub: pdf-guitar-tab-parser
+    </a>
+  </footer>
+
+  <script>
+    const dropZone    = document.getElementById('drop-zone');
+    const fileInput   = document.getElementById('file-input');
+    const fileNameEl  = document.getElementById('file-name');
+    const convertBtn  = document.getElementById('convert-btn');
+    const progressArea = document.getElementById('progress-area');
+    const progressBar  = document.getElementById('progress-bar');
+    const statusText   = document.getElementById('status-text');
+    const resultArea   = document.getElementById('result-area');
+    const errorArea    = document.getElementById('error-area');
+    const resetBtn     = document.getElementById('reset-btn');
+    const dlMusicxml   = document.getElementById('dl-musicxml');
+    const dlAscii      = document.getElementById('dl-ascii');
+
+    let selectedFile = null;
+    let currentTaskId = null;
+    let pollTimer = null;
+
+    // ── 拖拽 ──
+    dropZone.addEventListener('dragover', e => {
+      e.preventDefault();
+      dropZone.classList.add('drag-over');
+    });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file) setFile(file);
+    });
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) setFile(fileInput.files[0]);
+    });
+
+    function setFile(file) {
+      if (!file.name.toLowerCase().endsWith('.pdf')) {
+        showError('只支持 PDF 文件');
+        return;
+      }
+      selectedFile = file;
+      fileNameEl.textContent = file.name;
+      convertBtn.textContent = '开始转换';
+      convertBtn.disabled = false;
+      hideError();
+    }
+
+    // ── 转换 ──
+    convertBtn.addEventListener('click', async () => {
+      if (!selectedFile) return;
+
+      const title = document.getElementById('title-input').value.trim();
+      const tempo = parseInt(document.getElementById('tempo-input').value) || 100;
+
+      setUIState('processing');
+
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('title', title);
+      formData.append('tempo', tempo);
+
+      try {
+        const res = await fetch('/api/convert', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) { showError(data.error || '上传失败'); setUIState('idle'); return; }
+        currentTaskId = data.task_id;
+        pollStatus();
+      } catch (e) {
+        showError('网络错误：' + e.message);
+        setUIState('idle');
+      }
+    });
+
+    function pollStatus() {
+      pollTimer = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/status/${currentTaskId}`);
+          const data = await res.json();
+          if (data.status === 'done') {
+            clearInterval(pollTimer);
+            setUIState('done');
+          } else if (data.status === 'error') {
+            clearInterval(pollTimer);
+            showError('解析失败：' + (data.error || '未知错误'));
+            setUIState('idle');
+          }
+        } catch (e) {
+          clearInterval(pollTimer);
+          showError('轮询失败：' + e.message);
+          setUIState('idle');
+        }
+      }, 800);
+    }
+
+    // ── 下载 ──
+    dlMusicxml.addEventListener('click', () => triggerDownload('musicxml'));
+    dlAscii.addEventListener('click',    () => triggerDownload('ascii'));
+
+    function triggerDownload(fmt) {
+      if (!currentTaskId) return;
+      const a = document.createElement('a');
+      a.href = `/api/download/${currentTaskId}/${fmt}`;
+      a.click();
+    }
+
+    // ── 重置 ──
+    resetBtn.addEventListener('click', () => {
+      selectedFile = null;
+      currentTaskId = null;
+      fileInput.value = '';
+      fileNameEl.textContent = '';
+      document.getElementById('title-input').value = '';
+      document.getElementById('tempo-input').value = '100';
+      setUIState('idle');
+      hideError();
+    });
+
+    // ── UI 状态机 ──
+    function setUIState(state) {
+      progressArea.style.display = 'none';
+      resultArea.style.display   = 'none';
+      resetBtn.style.display     = 'none';
+      convertBtn.disabled        = false;
+
+      if (state === 'processing') {
+        convertBtn.disabled = true;
+        convertBtn.textContent = '转换中…';
+        progressArea.style.display = 'block';
+        progressBar.classList.add('indeterminate');
+        statusText.textContent = '正在解析中，请稍候…';
+      } else if (state === 'done') {
+        convertBtn.disabled = true;
+        convertBtn.textContent = '转换完成';
+        resultArea.style.display = 'flex';
+        resetBtn.style.display   = 'inline';
+      } else {
+        // idle
+        convertBtn.textContent = selectedFile ? '开始转换' : '选择文件后开始转换';
+        convertBtn.disabled = !selectedFile;
+      }
+    }
+
+    function showError(msg) {
+      errorArea.textContent = '⚠️ ' + msg;
+      errorArea.style.display = 'block';
+      resetBtn.style.display  = 'inline';
+    }
+    function hideError() {
+      errorArea.style.display = 'none';
+    }
+  </script>
+</body>
+</html>
