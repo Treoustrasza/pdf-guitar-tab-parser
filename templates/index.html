@@ -393,6 +393,62 @@
     .dl-btn.secondary { border-color: var(--blue); color: var(--blue); }
     .dl-btn.secondary:hover { background: rgba(122,170,187,0.08); }
 
+    /* ── 预览区域 ── */
+    #preview-area {
+      margin-top: 22px;
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .preview-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .preview-label {
+      font-size: 0.75rem;
+      color: var(--text-faint);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      font-family: 'Special Elite', serif;
+    }
+    #preview-toggle {
+      background: none;
+      border: none;
+      color: var(--text-faint);
+      font-size: 0.78rem;
+      cursor: pointer;
+      font-family: 'Noto Serif SC', serif;
+      text-decoration: underline;
+      text-decoration-style: dotted;
+      text-underline-offset: 3px;
+      padding: 0;
+    }
+    #preview-toggle:hover { color: var(--text-dim); }
+    #preview-scroll {
+      overflow-x: auto;
+      overflow-y: hidden;
+      border: 1px solid var(--border2);
+      border-radius: 2px;
+      background: #f0ebe2;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    #preview-scroll::-webkit-scrollbar { height: 5px; }
+    #preview-scroll::-webkit-scrollbar-track { background: transparent; }
+    #preview-scroll::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 99px;
+    }
+    #preview-img { display: block; max-width: none; }
+    #preview-loading {
+      padding: 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--text-faint);
+      font-style: italic;
+    }
+
     /* ── 错误 ── */
     #error-area {
       margin-top: 14px;
@@ -520,6 +576,18 @@
       </div>
     </div>
 
+    <!-- 预览 -->
+    <div id="preview-area">
+      <div class="preview-header">
+        <span class="preview-label">Preview</span>
+        <button id="preview-toggle">收起</button>
+      </div>
+      <div id="preview-scroll">
+        <div id="preview-loading">正在生成预览…</div>
+        <img id="preview-img" src="" alt="六线谱预览" style="display:none" />
+      </div>
+    </div>
+
     <!-- 错误 -->
     <div id="error-area"></div>
 
@@ -547,15 +615,21 @@
     const progressArea = document.getElementById('progress-area');
     const progressBar  = document.getElementById('progress-bar');
     const statusText   = document.getElementById('status-text');
-    const resultArea   = document.getElementById('result-area');
-    const errorArea    = document.getElementById('error-area');
-    const resetBtn     = document.getElementById('reset-btn');
-    const dlMusicxml   = document.getElementById('dl-musicxml');
-    const dlAscii      = document.getElementById('dl-ascii');
+    const resultArea    = document.getElementById('result-area');
+    const errorArea     = document.getElementById('error-area');
+    const resetBtn      = document.getElementById('reset-btn');
+    const dlMusicxml    = document.getElementById('dl-musicxml');
+    const dlAscii       = document.getElementById('dl-ascii');
+    const previewArea   = document.getElementById('preview-area');
+    const previewScroll = document.getElementById('preview-scroll');
+    const previewImg    = document.getElementById('preview-img');
+    const previewLoad   = document.getElementById('preview-loading');
+    const previewToggle = document.getElementById('preview-toggle');
 
-    let selectedFile  = null;
-    let currentTaskId = null;
-    let pollTimer     = null;
+    let selectedFile    = null;
+    let currentTaskId   = null;
+    let pollTimer       = null;
+    let previewOpen     = true;
 
     // ── 拖拽 ──
     dropZone.addEventListener('dragover', e => {
@@ -639,6 +713,38 @@
       a.click();
     }
 
+    // ── 预览收起/展开 ──
+    previewToggle.addEventListener('click', () => {
+      previewOpen = !previewOpen;
+      previewScroll.style.display = previewOpen ? 'block' : 'none';
+      previewToggle.textContent   = previewOpen ? '收起' : '展开';
+    });
+
+    // ── 加载预览 SVG ──
+    function loadPreview(taskId) {
+      previewArea.style.display = 'flex';
+      previewLoad.style.display = 'block';
+      previewImg.style.display  = 'none';
+      previewOpen = true;
+      previewScroll.style.display = 'block';
+      previewToggle.textContent   = '收起';
+
+      // 用 blob URL 加载 SVG，避免跨域问题
+      fetch(`/api/preview/${taskId}`)
+        .then(r => r.blob())
+        .then(blob => {
+          const url = URL.createObjectURL(blob);
+          previewImg.onload = () => {
+            previewLoad.style.display = 'none';
+            previewImg.style.display  = 'block';
+          };
+          previewImg.src = url;
+        })
+        .catch(() => {
+          previewLoad.textContent = '预览生成失败';
+        });
+    }
+
     // ── 重置 ──
     resetBtn.addEventListener('click', () => {
       selectedFile  = null;
@@ -647,6 +753,9 @@
       fileNameEl.textContent = '';
       document.getElementById('title-input').value = '';
       document.getElementById('tempo-input').value = '100';
+      previewArea.style.display = 'none';
+      previewImg.src = '';
+      previewLoad.textContent = '正在生成预览…';
       setUIState('idle');
       hideError();
     });
@@ -669,6 +778,7 @@
         convertBtn.textContent = '— 转换完成 —';
         resultArea.style.display = 'flex';
         resetBtn.style.display   = 'inline';
+        loadPreview(currentTaskId);
       } else {
         convertBtn.textContent = selectedFile ? '— 开始转换 —' : '— 选择文件后开始转换 —';
         convertBtn.disabled = !selectedFile;

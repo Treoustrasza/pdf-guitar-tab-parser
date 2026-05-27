@@ -5,8 +5,10 @@ Flask 后端：PDF 吉他六线谱 → MusicXML 在线转换服务
 import os
 import uuid
 import threading
-from flask import Flask, request, jsonify, send_file, render_template
-from tab_parser import convert_pdf_to_musicxml
+from flask import Flask, request, jsonify, send_file, render_template, Response
+from tab_parser import convert_pdf_to_musicxml, parse_tab_page
+from tab_svg import render_svg
+import pdfplumber
 
 app = Flask(__name__)
 
@@ -22,6 +24,16 @@ tasks = {}
 def run_conversion(task_id, pdf_path, output_path, title, tempo):
     try:
         tasks[task_id]['status'] = 'processing'
+
+        # 解析所有页，保存行数据供预览用
+        all_rows = []
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                all_rows.extend(parse_tab_page(page))
+
+        tasks[task_id]['rows']  = all_rows
+        tasks[task_id]['title'] = title
+
         convert_pdf_to_musicxml(
             pdf_path,
             output_path=output_path,
@@ -107,6 +119,17 @@ def download(task_id, fmt):
     return send_file(path, mimetype=mimetype,
                      as_attachment=True,
                      download_name=f'output{suffix}')
+
+
+@app.route('/api/preview/<task_id>')
+def preview(task_id):
+    task = tasks.get(task_id)
+    if not task or task['status'] != 'done':
+        return jsonify({'error': '任务未完成'}), 404
+    rows  = task.get('rows', [])
+    title = task.get('title', '')
+    svg   = render_svg(rows, title=title)
+    return Response(svg, mimetype='image/svg+xml')
 
 
 if __name__ == '__main__':
