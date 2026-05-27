@@ -87,7 +87,7 @@ MIDI_TO_PITCH = {
 # ─────────────────────────────────────────────
 
 def build_measures(positions, cluster_centers, duration_names, barline_xs,
-                   barline_tolerance=12.0):
+                   barline_tolerance=12.0, techniques=None):
     """
     将 positions/duration_names/barline_xs 组织成小节列表。
 
@@ -96,12 +96,15 @@ def build_measures(positions, cluster_centers, duration_names, barline_xs,
             {  # 一个时间位置（beat）
                 'notes': {string_idx(0-5): fret_str},
                 'duration_name': 'eighth' | None,
+                'techniques': {'hammer_on': bool, 'pull_off': bool, ...} | None,
             },
             ...
         ],
         ...
     ]
     """
+    if techniques is None:
+        techniques = {}
     # 判断每个 cluster 之后是否有小节线
     barline_after = [False] * len(cluster_centers)
     for bx in sorted(barline_xs):
@@ -123,6 +126,7 @@ def build_measures(positions, cluster_centers, duration_names, barline_xs,
         beat = {
             'notes': {s: fret for s, fret in pos.items()},
             'duration_name': duration_names[ci],
+            'techniques': techniques.get(ci),
         }
         current_measure.append(beat)
         if barline_after[ci]:
@@ -155,7 +159,7 @@ def _pitch_element(parent, string_num, fret_num):
 
 
 def _note_element(measure_el, string_num, fret_num, duration_name,
-                  is_chord=False, is_rest=False):
+                  is_chord=False, is_rest=False, techniques=None):
     """
     在 measure_el 下添加一个 <note> 元素。
     string_num: 1-6（MusicXML 弦号，1=最高音弦）
@@ -163,6 +167,7 @@ def _note_element(measure_el, string_num, fret_num, duration_name,
     duration_name: 'eighth', 'quarter' 等
     is_chord: True 表示与前一个音符同时发声（和弦）
     is_rest: True 表示休止符
+    techniques: dict，包含 hammer_on/pull_off/slide/grace_note 标志
     """
     xml_type, divs, dotted = DURATION_TO_XML.get(
         duration_name, ('quarter', 16, False)
@@ -188,6 +193,21 @@ def _note_element(measure_el, string_num, fret_num, duration_name,
         technical = SubElement(notations, 'technical')
         SubElement(technical, 'string').text = str(string_num)
         SubElement(technical, 'fret').text = str(fret_num)
+
+        # 技法标注
+        if techniques:
+            if techniques.get('hammer_on'):
+                SubElement(technical, 'hammer-on', number='1', type='start').text = 'H'
+            if techniques.get('pull_off'):
+                SubElement(technical, 'pull-off', number='1', type='start').text = 'P'
+            if techniques.get('slide'):
+                slide_el = SubElement(technical, 'slide', number='1', type='start')
+                slide_el.set('line-type', 'solid')
+
+        # 装饰音标注（ornaments）：用 trill-mark 表示装饰音弧线
+        if techniques and techniques.get('grace_note'):
+            ornaments = SubElement(notations, 'ornaments')
+            SubElement(ornaments, 'trill-mark')
 
     return note
 
@@ -297,10 +317,12 @@ def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100):
                 continue
 
             # 第一个音符正常写，其余加 <chord/>
+            beat_techniques = beat.get('techniques')
             for i, (xml_string, fret_num) in enumerate(string_fret_pairs):
                 _note_element(
                     measure_el, xml_string, fret_num, dur_name,
-                    is_chord=(i > 0)
+                    is_chord=(i > 0),
+                    techniques=beat_techniques if i == 0 else None
                 )
 
     return ElementTree(score)

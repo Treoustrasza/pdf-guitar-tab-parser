@@ -8,6 +8,7 @@ import pdfplumber
 from collections import defaultdict
 from rhythm_parser import parse_rhythm_page
 from musicxml_writer import build_measures, build_musicxml, write_musicxml
+from technique_parser import collect_techniques
 
 
 # ─────────────────────────────────────────────
@@ -246,8 +247,12 @@ def parse_tab_page(page):
         duration_names = assign_duration_to_positions(cluster_centers, durations)
         barline_xs = barlines_by_group.get(g_idx, [])
 
+        # 技法符号（击弦/勾弦/滑弦/装饰音）
+        techniques = collect_techniques(page, sg, cluster_centers)
+
         # 结构化小节数据（MusicXML 用）
-        measures = build_measures(positions, cluster_centers, duration_names, barline_xs)
+        measures = build_measures(positions, cluster_centers, duration_names, barline_xs,
+                                  techniques=techniques)
 
         # ASCII Tab（调试用）
         dur_line, tab_lines = render_ascii_tab(
@@ -258,6 +263,7 @@ def parse_tab_page(page):
             'measures': measures,
             'ascii_dur_line': dur_line,
             'ascii_tab_lines': tab_lines,
+            'techniques': techniques,
         })
 
     return result_rows
@@ -320,7 +326,7 @@ def convert_pdf_to_musicxml(pdf_path, output_path=None, title=None, tempo=100,
 
 
 if __name__ == '__main__':
-    pdf_path = r'C:\Users\王诗语\Documents\Tencent Files\931865382\FileRecv\MobileFile\Immature（指弹改编）.pdf'
+    pdf_path = r'Immature（指弹改编）.pdf'
     convert_pdf_to_musicxml(
         pdf_path,
         output_path=r'D:\working_dir\tab_demo\Immature.musicxml',
