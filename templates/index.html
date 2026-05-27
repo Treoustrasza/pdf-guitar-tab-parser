@@ -3,60 +3,196 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PDF 吉他六线谱转换器</title>
+  <title>六线谱转换器</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Special+Elite&family=Noto+Serif+SC:wght@300;400&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    /* ══════════════════════════════════════
+       梦核调色板
+       背景：褪色的米白 / 旧纸黄
+       强调：病态粉 / 薰衣草紫 / 水洗蓝
+       文字：深棕 / 灰绿
+    ══════════════════════════════════════ */
+    :root {
+      --bg:        #e8e0d5;
+      --bg2:       #ddd5c8;
+      --paper:     #f0ebe2;
+      --border:    #b8a898;
+      --border2:   #c9b8a8;
+      --text:      #3d3028;
+      --text-dim:  #7a6a5a;
+      --text-faint:#a89888;
+      --pink:      #d4829a;
+      --pink-dim:  #c07088;
+      --lavender:  #9b8ec4;
+      --blue:      #7aaabb;
+      --green:     #7a9a88;
+      --red:       #b86060;
+      --shadow:    rgba(60,40,20,0.18);
+    }
+
+    html { height: 100%; }
+
     body {
-      font-family: 'Segoe UI', 'PingFang SC', sans-serif;
-      background: #0f1117;
-      color: #e2e8f0;
+      font-family: 'Noto Serif SC', 'Georgia', serif;
+      background-color: var(--bg);
+      background-image:
+        /* 细噪点纹理 */
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E"),
+        /* 极淡的放射渐变，中心稍亮 */
+        radial-gradient(ellipse at 50% 30%, #f5ede0 0%, #ddd0c0 100%);
+      color: var(--text);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 48px 16px;
+      padding: 56px 16px 64px;
+      position: relative;
+      overflow-x: hidden;
+    }
+
+    /* ── 背景装饰：漂浮的五线谱线 ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        repeating-linear-gradient(
+          180deg,
+          transparent 0px,
+          transparent 28px,
+          rgba(100,80,60,0.07) 28px,
+          rgba(100,80,60,0.07) 29px
+        );
+      background-size: 100% 145px;
+      z-index: 0;
+    }
+
+    /* ── 背景装饰：角落污渍晕染 ── */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse 40% 30% at 5% 8%,  rgba(180,140,100,0.12) 0%, transparent 70%),
+        radial-gradient(ellipse 30% 25% at 95% 92%, rgba(140,100,120,0.10) 0%, transparent 70%),
+        radial-gradient(ellipse 20% 20% at 80% 5%,  rgba(160,120,80,0.08)  0%, transparent 70%);
+      z-index: 0;
+    }
+
+    /* ── 所有内容在噪点层之上 ── */
+    h1, .subtitle, .card, footer, .stamp { position: relative; z-index: 1; }
+
+    /* ══ 标题区 ══ */
+    .header-wrap {
+      text-align: center;
+      margin-bottom: 36px;
+      position: relative;
+      z-index: 1;
     }
 
     h1 {
-      font-size: 2rem;
-      font-weight: 700;
-      letter-spacing: -0.5px;
-      margin-bottom: 8px;
-      background: linear-gradient(135deg, #a78bfa, #60a5fa);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      font-family: 'Special Elite', 'Noto Serif SC', serif;
+      font-size: 2.4rem;
+      font-weight: 400;
+      letter-spacing: 2px;
+      color: var(--text);
+      text-shadow: 1px 2px 0 rgba(255,255,255,0.5), -1px -1px 0 rgba(0,0,0,0.08);
+      margin-bottom: 10px;
+      /* 轻微倾斜，梦核感 */
+      transform: rotate(-0.6deg);
     }
 
     .subtitle {
-      color: #64748b;
-      font-size: 0.95rem;
-      margin-bottom: 40px;
+      font-size: 0.88rem;
+      color: var(--text-dim);
+      letter-spacing: 1.5px;
+      font-style: italic;
+      transform: rotate(0.3deg);
     }
 
+    /* 标题下方的手绘分隔线 */
+    .divider {
+      width: 180px;
+      height: 12px;
+      margin: 14px auto 0;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 12'%3E%3Cpath d='M0,6 Q20,2 40,6 Q60,10 80,6 Q100,2 120,6 Q140,10 160,6 Q170,4 180,6' stroke='%23b8a898' stroke-width='1.2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-size: contain;
+      opacity: 0.7;
+    }
+
+    /* ══ 卡片 ══ */
     .card {
-      background: #1e2130;
-      border: 1px solid #2d3148;
-      border-radius: 16px;
-      padding: 36px;
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      padding: 36px 40px 40px;
       width: 100%;
-      max-width: 560px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      max-width: 540px;
+      box-shadow:
+        4px 6px 0 rgba(100,80,60,0.08),
+        0 2px 24px var(--shadow),
+        inset 0 0 60px rgba(200,180,150,0.08);
+      /* 纸张轻微倾斜 */
+      transform: rotate(0.4deg);
+      position: relative;
+    }
+
+    /* 卡片左侧装订孔 */
+    .card::before {
+      content: '';
+      position: absolute;
+      left: -1px;
+      top: 0;
+      bottom: 0;
+      width: 28px;
+      background: repeating-linear-gradient(
+        180deg,
+        transparent 0px,
+        transparent 38px,
+        rgba(100,80,60,0.12) 38px,
+        rgba(100,80,60,0.12) 39px
+      );
+      border-right: 1px solid rgba(100,80,60,0.1);
+    }
+
+    /* 卡片顶部胶带效果 */
+    .tape {
+      position: absolute;
+      top: -14px;
+      left: 50%;
+      transform: translateX(-50%) rotate(-1deg);
+      width: 80px;
+      height: 28px;
+      background: rgba(212,200,170,0.55);
+      border: 1px solid rgba(180,160,120,0.4);
+      border-radius: 1px;
+      backdrop-filter: blur(1px);
     }
 
     /* ── 拖拽区域 ── */
     #drop-zone {
-      border: 2px dashed #3d4268;
-      border-radius: 12px;
-      padding: 48px 24px;
+      border: 1.5px dashed var(--border);
+      border-radius: 2px;
+      padding: 44px 24px;
       text-align: center;
       cursor: pointer;
-      transition: border-color 0.2s, background 0.2s;
+      transition: border-color 0.25s, background 0.25s;
       position: relative;
+      background: rgba(200,185,165,0.12);
+      /* 内部也有噪点 */
+      background-image:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E"),
+        linear-gradient(135deg, rgba(200,185,165,0.12), rgba(180,165,145,0.06));
     }
     #drop-zone.drag-over {
-      border-color: #a78bfa;
-      background: rgba(167,139,250,0.06);
+      border-color: var(--pink);
+      background-color: rgba(212,130,154,0.06);
     }
     #drop-zone input[type="file"] {
       position: absolute;
@@ -65,117 +201,164 @@
       cursor: pointer;
     }
     .drop-icon {
-      font-size: 2.5rem;
-      margin-bottom: 12px;
+      font-size: 2.2rem;
+      margin-bottom: 10px;
+      filter: sepia(0.4) saturate(0.7);
+      display: block;
     }
     .drop-label {
-      font-size: 1rem;
-      color: #94a3b8;
+      font-size: 0.9rem;
+      color: var(--text-dim);
+      font-style: italic;
+      line-height: 1.6;
     }
     .drop-label span {
-      color: #a78bfa;
-      font-weight: 600;
+      color: var(--pink-dim);
+      text-decoration: underline;
+      text-decoration-style: dotted;
+      text-underline-offset: 3px;
     }
     #file-name {
       margin-top: 10px;
-      font-size: 0.85rem;
-      color: #60a5fa;
-      min-height: 20px;
+      font-size: 0.82rem;
+      color: var(--lavender);
+      min-height: 18px;
+      font-style: italic;
+      letter-spacing: 0.3px;
     }
 
     /* ── 参数行 ── */
     .params {
       display: flex;
       gap: 16px;
-      margin-top: 24px;
+      margin-top: 22px;
     }
     .param-group {
       flex: 1;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 5px;
     }
     label {
-      font-size: 0.8rem;
-      color: #64748b;
+      font-size: 0.72rem;
+      color: var(--text-faint);
+      letter-spacing: 1.5px;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      font-family: 'Special Elite', serif;
     }
     input[type="text"], input[type="number"] {
-      background: #0f1117;
-      border: 1px solid #2d3148;
-      border-radius: 8px;
-      color: #e2e8f0;
-      padding: 8px 12px;
-      font-size: 0.95rem;
+      background: rgba(200,185,165,0.2);
+      border: none;
+      border-bottom: 1.5px solid var(--border2);
+      border-radius: 0;
+      color: var(--text);
+      padding: 7px 4px;
+      font-size: 0.92rem;
+      font-family: 'Noto Serif SC', serif;
       outline: none;
       transition: border-color 0.2s;
       width: 100%;
     }
-    input:focus { border-color: #a78bfa; }
+    input::placeholder { color: var(--text-faint); font-style: italic; }
+    input:focus { border-bottom-color: var(--pink); background: rgba(212,130,154,0.05); }
 
     /* ── 转换按钮 ── */
     #convert-btn {
-      margin-top: 24px;
+      margin-top: 26px;
       width: 100%;
-      padding: 13px;
-      border: none;
-      border-radius: 10px;
-      background: linear-gradient(135deg, #7c3aed, #2563eb);
-      color: #fff;
-      font-size: 1rem;
-      font-weight: 600;
+      padding: 12px;
+      border: 1.5px solid var(--border);
+      border-radius: 1px;
+      background: var(--bg2);
+      color: var(--text);
+      font-size: 0.92rem;
+      font-family: 'Special Elite', 'Noto Serif SC', serif;
+      letter-spacing: 2px;
       cursor: pointer;
-      transition: opacity 0.2s, transform 0.1s;
+      transition: background 0.2s, border-color 0.2s, transform 0.1s, box-shadow 0.2s;
+      box-shadow: 2px 3px 0 rgba(100,80,60,0.12);
+      position: relative;
+      overflow: hidden;
     }
-    #convert-btn:hover:not(:disabled) { opacity: 0.88; }
-    #convert-btn:active:not(:disabled) { transform: scale(0.98); }
-    #convert-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    #convert-btn::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 60%);
+      pointer-events: none;
+    }
+    #convert-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--pink-dim);
+      box-shadow: 3px 4px 0 rgba(100,80,60,0.15);
+      transform: translate(-1px, -1px);
+    }
+    #convert-btn:active:not(:disabled) {
+      transform: translate(1px, 1px);
+      box-shadow: 1px 1px 0 rgba(100,80,60,0.12);
+    }
+    #convert-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
 
     /* ── 进度区域 ── */
     #progress-area {
-      margin-top: 24px;
+      margin-top: 22px;
       display: none;
     }
     .progress-bar-wrap {
-      background: #0f1117;
-      border-radius: 99px;
-      height: 6px;
+      background: rgba(150,130,110,0.15);
+      border-radius: 0;
+      height: 3px;
       overflow: hidden;
       margin-bottom: 10px;
+      border-bottom: 1px solid var(--border2);
     }
     .progress-bar {
       height: 100%;
-      border-radius: 99px;
-      background: linear-gradient(90deg, #7c3aed, #60a5fa);
+      background: linear-gradient(90deg, var(--pink-dim), var(--lavender));
       width: 0%;
       transition: width 0.4s ease;
     }
     .progress-bar.indeterminate {
-      width: 40%;
-      animation: slide 1.2s ease-in-out infinite;
+      width: 35%;
+      animation: slide 1.6s cubic-bezier(0.4,0,0.6,1) infinite;
     }
     @keyframes slide {
-      0%   { margin-left: -40%; }
-      100% { margin-left: 100%; }
+      0%   { margin-left: -35%; opacity: 0.6; }
+      50%  { opacity: 1; }
+      100% { margin-left: 100%; opacity: 0.6; }
     }
     #status-text {
-      font-size: 0.88rem;
-      color: #94a3b8;
+      font-size: 0.8rem;
+      color: var(--text-faint);
       text-align: center;
+      font-style: italic;
+      letter-spacing: 0.5px;
+      animation: flicker 3s ease-in-out infinite;
+    }
+    @keyframes flicker {
+      0%, 100% { opacity: 1; }
+      45%       { opacity: 0.6; }
+      50%       { opacity: 0.9; }
+      55%       { opacity: 0.5; }
     }
 
     /* ── 结果区域 ── */
     #result-area {
-      margin-top: 24px;
+      margin-top: 22px;
       display: none;
       flex-direction: column;
-      gap: 12px;
+      gap: 14px;
     }
     .result-title {
-      font-size: 0.85rem;
-      color: #64748b;
+      font-size: 0.8rem;
+      color: var(--green);
       text-align: center;
+      letter-spacing: 1px;
+      font-style: italic;
     }
     .download-btns {
       display: flex;
@@ -183,79 +366,125 @@
     }
     .dl-btn {
       flex: 1;
-      padding: 11px;
-      border-radius: 10px;
-      border: 1px solid;
-      font-size: 0.9rem;
-      font-weight: 600;
+      padding: 10px 8px;
+      border-radius: 1px;
+      border: 1.5px solid var(--border);
+      font-size: 0.85rem;
+      font-family: 'Special Elite', 'Noto Serif SC', serif;
+      letter-spacing: 1px;
       cursor: pointer;
       text-align: center;
       text-decoration: none;
-      transition: background 0.2s;
+      transition: background 0.2s, border-color 0.2s, transform 0.1s;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
+      background: var(--paper);
+      color: var(--text-dim);
+      box-shadow: 2px 2px 0 rgba(100,80,60,0.1);
     }
-    .dl-btn.primary {
-      background: rgba(124,58,237,0.15);
-      border-color: #7c3aed;
-      color: #a78bfa;
+    .dl-btn:hover {
+      transform: translate(-1px, -1px);
+      box-shadow: 3px 3px 0 rgba(100,80,60,0.12);
     }
-    .dl-btn.primary:hover { background: rgba(124,58,237,0.28); }
-    .dl-btn.secondary {
-      background: rgba(37,99,235,0.1);
-      border-color: #2563eb;
-      color: #60a5fa;
-    }
-    .dl-btn.secondary:hover { background: rgba(37,99,235,0.22); }
+    .dl-btn.primary { border-color: var(--lavender); color: var(--lavender); }
+    .dl-btn.primary:hover { background: rgba(155,142,196,0.08); border-color: var(--lavender); }
+    .dl-btn.secondary { border-color: var(--blue); color: var(--blue); }
+    .dl-btn.secondary:hover { background: rgba(122,170,187,0.08); }
 
     /* ── 错误 ── */
     #error-area {
-      margin-top: 16px;
+      margin-top: 14px;
       display: none;
-      background: rgba(239,68,68,0.1);
-      border: 1px solid rgba(239,68,68,0.3);
-      border-radius: 10px;
-      padding: 12px 16px;
-      font-size: 0.88rem;
-      color: #fca5a5;
+      border-left: 3px solid var(--red);
+      padding: 10px 14px;
+      font-size: 0.84rem;
+      color: var(--red);
+      font-style: italic;
+      background: rgba(184,96,96,0.05);
     }
 
-    /* ── 重置按钮 ── */
+    /* ── 重置 ── */
     #reset-btn {
-      margin-top: 8px;
+      margin-top: 10px;
       background: none;
       border: none;
-      color: #64748b;
-      font-size: 0.85rem;
+      color: var(--text-faint);
+      font-size: 0.78rem;
+      font-family: 'Noto Serif SC', serif;
       cursor: pointer;
       text-decoration: underline;
+      text-decoration-style: dotted;
+      text-underline-offset: 3px;
       display: none;
+      letter-spacing: 0.5px;
     }
-    #reset-btn:hover { color: #94a3b8; }
+    #reset-btn:hover { color: var(--text-dim); }
 
+    /* ══ 页脚 ══ */
     footer {
-      margin-top: 40px;
-      font-size: 0.78rem;
-      color: #334155;
+      margin-top: 44px;
+      font-size: 0.72rem;
+      color: var(--text-faint);
+      letter-spacing: 1px;
+      font-style: italic;
+      position: relative;
+      z-index: 1;
+      transform: rotate(0.2deg);
     }
-    footer a { color: #475569; text-decoration: none; }
-    footer a:hover { color: #64748b; }
+    footer a { color: var(--text-faint); text-decoration: none; }
+    footer a:hover { color: var(--text-dim); text-decoration: underline; text-decoration-style: dotted; }
+
+    /* ══ 角落邮票装饰 ══ */
+    .stamp {
+      position: fixed;
+      bottom: 28px;
+      right: 28px;
+      width: 52px;
+      height: 64px;
+      border: 2px solid var(--border);
+      background: var(--paper);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.4rem;
+      box-shadow: 1px 2px 4px var(--shadow);
+      opacity: 0.5;
+      transform: rotate(3deg);
+      /* 邮票锯齿边 */
+      -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='52' height='64'%3E%3Crect x='4' y='4' width='44' height='56' rx='1' fill='white'/%3E%3C/svg%3E");
+      mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='52' height='64'%3E%3Crect x='4' y='4' width='44' height='56' rx='1' fill='white'/%3E%3C/svg%3E");
+    }
+    .stamp-text {
+      font-size: 0.45rem;
+      letter-spacing: 0.5px;
+      color: var(--text-faint);
+      font-family: 'Special Elite', serif;
+      margin-top: 2px;
+    }
   </style>
 </head>
 <body>
 
-  <h1>🎸 六线谱转换器</h1>
-  <p class="subtitle">上传 PDF 吉他六线谱，导出 MusicXML / ASCII Tab</p>
+  <div class="header-wrap">
+    <h1>Guitar Tab Parser</h1>
+    <p class="subtitle">将 PDF 六线谱转化为可编辑乐谱</p>
+    <div class="divider"></div>
+  </div>
 
   <div class="card">
+    <div class="tape"></div>
 
     <!-- 拖拽上传 -->
     <div id="drop-zone">
       <input type="file" id="file-input" accept=".pdf" />
-      <div class="drop-icon">📄</div>
-      <div class="drop-label">拖拽 PDF 到此处，或 <span>点击选择文件</span></div>
+      <span class="drop-icon">🎼</span>
+      <div class="drop-label">
+        将 PDF 文件拖拽至此<br>
+        或 <span>点击选择文件</span>
+      </div>
       <div id="file-name"></div>
     </div>
 
@@ -265,29 +494,29 @@
         <label for="title-input">曲目标题</label>
         <input type="text" id="title-input" placeholder="留空则从文件名提取" />
       </div>
-      <div class="param-group" style="max-width:110px">
+      <div class="param-group" style="max-width:100px">
         <label for="tempo-input">速度 BPM</label>
         <input type="number" id="tempo-input" value="100" min="20" max="300" />
       </div>
     </div>
 
     <!-- 转换按钮 -->
-    <button id="convert-btn" disabled>选择文件后开始转换</button>
+    <button id="convert-btn" disabled>— 选择文件后开始转换 —</button>
 
     <!-- 进度 -->
     <div id="progress-area">
       <div class="progress-bar-wrap">
         <div class="progress-bar indeterminate" id="progress-bar"></div>
       </div>
-      <div id="status-text">正在解析中，请稍候…</div>
+      <div id="status-text">正在解析乐谱，请稍候…</div>
     </div>
 
     <!-- 结果 -->
     <div id="result-area">
-      <div class="result-title">✅ 转换完成，选择下载格式</div>
+      <div class="result-title">— 转换完成，请选择下载格式 —</div>
       <div class="download-btns">
-        <button class="dl-btn primary" id="dl-musicxml">🎼 MusicXML</button>
-        <button class="dl-btn secondary" id="dl-ascii">📝 ASCII Tab</button>
+        <button class="dl-btn primary" id="dl-musicxml">♩ MusicXML</button>
+        <button class="dl-btn secondary" id="dl-ascii">≡ ASCII Tab</button>
       </div>
     </div>
 
@@ -296,20 +525,25 @@
 
     <!-- 重置 -->
     <button id="reset-btn">重新上传</button>
-
   </div>
 
   <footer>
     <a href="https://github.com/Treoustrasza/pdf-guitar-tab-parser" target="_blank">
-      GitHub: pdf-guitar-tab-parser
+      ✦ pdf-guitar-tab-parser ✦
     </a>
   </footer>
 
+  <!-- 角落邮票 -->
+  <div class="stamp">
+    <span>🎸</span>
+    <span class="stamp-text">TAB</span>
+  </div>
+
   <script>
-    const dropZone    = document.getElementById('drop-zone');
-    const fileInput   = document.getElementById('file-input');
-    const fileNameEl  = document.getElementById('file-name');
-    const convertBtn  = document.getElementById('convert-btn');
+    const dropZone     = document.getElementById('drop-zone');
+    const fileInput    = document.getElementById('file-input');
+    const fileNameEl   = document.getElementById('file-name');
+    const convertBtn   = document.getElementById('convert-btn');
     const progressArea = document.getElementById('progress-area');
     const progressBar  = document.getElementById('progress-bar');
     const statusText   = document.getElementById('status-text');
@@ -319,9 +553,9 @@
     const dlMusicxml   = document.getElementById('dl-musicxml');
     const dlAscii      = document.getElementById('dl-ascii');
 
-    let selectedFile = null;
+    let selectedFile  = null;
     let currentTaskId = null;
-    let pollTimer = null;
+    let pollTimer     = null;
 
     // ── 拖拽 ──
     dropZone.addEventListener('dragover', e => {
@@ -345,8 +579,8 @@
         return;
       }
       selectedFile = file;
-      fileNameEl.textContent = file.name;
-      convertBtn.textContent = '开始转换';
+      fileNameEl.textContent = '↳ ' + file.name;
+      convertBtn.textContent = '— 开始转换 —';
       convertBtn.disabled = false;
       hideError();
     }
@@ -354,19 +588,15 @@
     // ── 转换 ──
     convertBtn.addEventListener('click', async () => {
       if (!selectedFile) return;
-
       const title = document.getElementById('title-input').value.trim();
       const tempo = parseInt(document.getElementById('tempo-input').value) || 100;
-
       setUIState('processing');
-
       const formData = new FormData();
       formData.append('file', selectedFile);
       formData.append('title', title);
       formData.append('tempo', tempo);
-
       try {
-        const res = await fetch('/api/convert', { method: 'POST', body: formData });
+        const res  = await fetch('/api/convert', { method: 'POST', body: formData });
         const data = await res.json();
         if (!res.ok) { showError(data.error || '上传失败'); setUIState('idle'); return; }
         currentTaskId = data.task_id;
@@ -380,7 +610,7 @@
     function pollStatus() {
       pollTimer = setInterval(async () => {
         try {
-          const res = await fetch(`/api/status/${currentTaskId}`);
+          const res  = await fetch(`/api/status/${currentTaskId}`);
           const data = await res.json();
           if (data.status === 'done') {
             clearInterval(pollTimer);
@@ -411,7 +641,7 @@
 
     // ── 重置 ──
     resetBtn.addEventListener('click', () => {
-      selectedFile = null;
+      selectedFile  = null;
       currentTaskId = null;
       fileInput.value = '';
       fileNameEl.textContent = '';
@@ -430,24 +660,23 @@
 
       if (state === 'processing') {
         convertBtn.disabled = true;
-        convertBtn.textContent = '转换中…';
+        convertBtn.textContent = '— 转换中… —';
         progressArea.style.display = 'block';
         progressBar.classList.add('indeterminate');
-        statusText.textContent = '正在解析中，请稍候…';
+        statusText.textContent = '正在解析乐谱，请稍候…';
       } else if (state === 'done') {
         convertBtn.disabled = true;
-        convertBtn.textContent = '转换完成';
+        convertBtn.textContent = '— 转换完成 —';
         resultArea.style.display = 'flex';
         resetBtn.style.display   = 'inline';
       } else {
-        // idle
-        convertBtn.textContent = selectedFile ? '开始转换' : '选择文件后开始转换';
+        convertBtn.textContent = selectedFile ? '— 开始转换 —' : '— 选择文件后开始转换 —';
         convertBtn.disabled = !selectedFile;
       }
     }
 
     function showError(msg) {
-      errorArea.textContent = '⚠️ ' + msg;
+      errorArea.textContent = msg;
       errorArea.style.display = 'block';
       resetBtn.style.display  = 'inline';
     }
