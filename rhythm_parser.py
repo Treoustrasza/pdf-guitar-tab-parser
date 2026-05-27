@@ -57,43 +57,87 @@ BEAM_COUNT_TO_DURATION = {
 # ─────────────────────────────────────────────
 # 小节线识别
 # ─────────────────────────────────────────────
+def _sg_gap(sg):
+    """计算弦线组的平均弦间距"""
+    if len(sg) < 2:
+        return 6.0
+    return (sg[-1] - sg[0]) / (len(sg) - 1)
+
+
+def _is_black(color):
+    """
+    判断颜色是否为黑色（或接近黑色）。
+    兼容多种颜色格式：
+      - (r, g, b) 元组，值域 0~1
+      - 单个灰度值（float），0=黑
+      - None（无填充）→ False
+    """
+    if color is None:
+        return False
+    if isinstance(color, (int, float)):
+        return color < 0.1
+    if isinstance(color, (tuple, list)):
+        if len(color) == 1:
+            return color[0] < 0.1
+        if len(color) == 3:
+            r, g, b = color
+            return r < 0.1 and g < 0.1 and b < 0.1
+        if len(color) == 4:  # CMYK
+            c, m, y, k = color
+            return k > 0.9
+    return False
+
+
 def find_barlines(page, string_groups):
     """
     从页面矩形中识别小节线。
-    小节线特征：宽 ~0.7pt，高接近弦线组高度（~31.9pt），黑色填充。
+    小节线特征：极窄、高度接近弦线组高度、黑色填充。
+    所有尺寸阈值基于弦线组间距动态计算。
     双小节线（两条紧挨着的线）合并为一条。
     返回：dict，key=group_idx，value=该行的小节线 x 坐标列表（已排序）
     """
     barlines_by_group = defaultdict(list)
-    
+
     for r in page.rects:
         w = r['x1'] - r['x0']
         h = r['bottom'] - r['top']
         fill = r.get('non_stroking_color')
-        
-        # 小节线：窄（宽 < 2pt）、高（> 25pt）、黑色
-        if w < 2.0 and h > 25.0 and fill == (0.0, 0.0, 0.0):
-            rect_top = r['top']
-            # 找这条线属于哪个弦线组
-            for g_idx, sg in enumerate(string_groups):
-                group_top = sg[0] - 5
-                group_bottom = sg[-1] + 5
-                if group_top <= rect_top <= group_bottom:
-                    barlines_by_group[g_idx].append(r['x0'])
-                    break
-    
-    # 排序，并合并双小节线（间距 < 5pt 的两条线视为同一条）
+
+        # 小节线必须是黑色（或接近黑色）填充
+        if not _is_black(fill):
+            continue
+
+        rect_top = r['top']
+        for g_idx, sg in enumerate(string_groups):
+            gap = _sg_gap(sg)
+            group_height = sg[-1] - sg[0]
+            margin = gap * 1.0
+
+            # 高度：至少覆盖弦线组高度的 60%
+            if h < group_height * 0.6:
+                continue
+            # 宽度：极窄，不超过 1 个弦间距
+            if w > gap:
+                continue
+            # 位置：矩形顶部在弦线组范围内（含上下各 1 个间距的余量）
+            if (sg[0] - margin) <= rect_top <= (sg[-1] + margin):
+                barlines_by_group[g_idx].append(r['x0'])
+                break
+
+    # 排序，并合并双小节线（间距 < 1 个弦间距的两条线视为同一条）
     for g_idx in barlines_by_group:
+        sg = string_groups[g_idx]
+        gap = _sg_gap(sg)
+        merge_dist = gap * 1.0
         xs = sorted(barlines_by_group[g_idx])
         merged = []
         for x in xs:
-            if merged and x - merged[-1] < 5.0:
-                # 双小节线：取中间值，标记为 double
+            if merged and x - merged[-1] < merge_dist:
                 merged[-1] = (merged[-1] + x) / 2
             else:
                 merged.append(x)
         barlines_by_group[g_idx] = merged
-    
+
     return barlines_by_group
 
 
@@ -103,31 +147,35 @@ def find_barlines(page, string_groups):
 def find_stems(page, string_groups):
     """
     识别符干（细竖线，位于弦线组下方）。
+    所有尺寸阈值基于弦线组间距动态计算。
     返回：dict，key=group_idx，value=[(x, stem_bottom, stem_height), ...]
     """
     stems_by_group = defaultdict(list)
-    
+
+    # 预先计算各组参数
+    group_params = [(sg, _sg_gap(sg)) for sg in string_groups]
+
     for l in page.lines:
-        # 竖线：x0 ≈ x1
-        if abs(l['x0'] - l['x1']) > 0.5:
+        # 竖线：x0 ≈ x1（允许极小偏差）
+        if abs(l['x0'] - l['x1']) > 0.8:
             continue
-        
+
         page_height = page.height
         top = page_height - l['y1']
         bottom = page_height - l['y0']
         h = bottom - top
-        
-        # 符干高度范围：5~50pt，线宽 ~0.51
-        if not (5 < h < 55 and abs(l['linewidth'] - 0.51) < 0.1):
+        if h <= 0:
             continue
-        
+
         x = l['x0']
-        
-        # 找所属弦线组（符干从弦线组下方延伸）
-        for g_idx, sg in enumerate(string_groups):
-            group_bottom = sg[-1]  # 最低弦的 top 坐标
-            # 符干的 top 应该在弦线组范围内或稍下方
-            if sg[0] - 5 <= top <= group_bottom + 20:
+
+        for g_idx, (sg, gap) in enumerate(group_params):
+            group_bottom = sg[-1]
+            # 符干高度：0.5~8 个弦间距（覆盖四分到六十四分音符）
+            if not (gap * 0.5 < h < gap * 8.0):
+                continue
+            # 符干位置：top 在弦线组范围内或稍下方（1 个间距余量）
+            if sg[0] - gap <= top <= group_bottom + gap:
                 stems_by_group[g_idx].append({
                     'x': x,
                     'top': top,
@@ -135,7 +183,7 @@ def find_stems(page, string_groups):
                     'height': h,
                 })
                 break
-    
+
     return stems_by_group
 
 
@@ -145,32 +193,41 @@ def find_stems(page, string_groups):
 def find_beams(page, string_groups):
     """
     识别符梁（宽矩形，位于弦线组下方）。
+    所有尺寸阈值基于弦线组间距动态计算。
     返回：dict，key=group_idx，value=[(x0, x1, top), ...]
     """
     beams_by_group = defaultdict(list)
-    
+
+    group_params = [(sg, _sg_gap(sg)) for sg in string_groups]
+
     for r in page.rects:
         w = r['x1'] - r['x0']
         h = r['bottom'] - r['top']
         fill = r.get('non_stroking_color')
-        
-        # 符梁：宽 > 10pt，高 1~4pt，黑色
-        if not (w > 10.0 and 1.0 < h < 4.5 and fill == (0.0, 0.0, 0.0)):
+
+        if not _is_black(fill):
             continue
-        
+
         beam_top = r['top']
-        
-        for g_idx, sg in enumerate(string_groups):
+
+        for g_idx, (sg, gap) in enumerate(group_params):
             group_bottom = sg[-1]
-            # 符梁在弦线组下方
-            if group_bottom < beam_top < group_bottom + 60:
-                beams_by_group[g_idx].append({
-                    'x0': r['x0'],
-                    'x1': r['x1'],
-                    'top': beam_top,
-                })
-                break
-    
+            # 符梁在弦线组下方，范围：0~8 个弦间距
+            if not (group_bottom < beam_top < group_bottom + gap * 8.0):
+                continue
+            # 符梁宽度：至少 1 个弦间距（排除小点/装饰）
+            if w < gap:
+                continue
+            # 符梁高度：0.1~0.8 个弦间距（薄矩形）
+            if not (gap * 0.1 < h < gap * 0.8):
+                continue
+            beams_by_group[g_idx].append({
+                'x0': r['x0'],
+                'x1': r['x1'],
+                'top': beam_top,
+            })
+            break
+
     return beams_by_group
 
 
@@ -179,31 +236,35 @@ def find_beams(page, string_groups):
 # ─────────────────────────────────────────────
 def find_dots(page, string_groups):
     """
-    识别附点（斜线段，出现在符干旁边）。
+    识别附点（短斜线段，出现在符干旁边）。
+    所有尺寸阈值基于弦线组间距动态计算。
     返回：dict，key=group_idx，value=[x 坐标列表]
     """
     dots_by_group = defaultdict(list)
-    
+    page_height = page.height
+    group_params = [(sg, _sg_gap(sg)) for sg in string_groups]
+
     for l in page.lines:
-        # 斜线：x0 ≠ x1 且 y0 ≠ y1，长度很短（< 5pt）
         dx = abs(l['x1'] - l['x0'])
-        page_height = page.height
         dy = abs(l['y1'] - l['y0'])
         length = (dx**2 + dy**2) ** 0.5
-        
-        if not (1.0 < length < 6.0 and dx > 0.5 and dy > 0.5):
+
+        # 附点是短斜线：两个方向都有分量（非纯竖/纯横）
+        if dx < 0.3 or dy < 0.3:
             continue
-        if abs(l['linewidth'] - 0.68) > 0.1:
-            continue
-        
+
         top = page_height - max(l['y0'], l['y1'])
         x = (l['x0'] + l['x1']) / 2
-        
-        for g_idx, sg in enumerate(string_groups):
-            if sg[0] - 10 <= top <= sg[-1] + 20:
+
+        for g_idx, (sg, gap) in enumerate(group_params):
+            # 附点长度：0.2~1.5 个弦间距
+            if not (gap * 0.2 < length < gap * 1.5):
+                continue
+            # 位置：弦线组范围内或稍下方（2 个间距余量）
+            if sg[0] - gap <= top <= sg[-1] + gap * 2.0:
                 dots_by_group[g_idx].append(x)
                 break
-    
+
     return dots_by_group
 
 
