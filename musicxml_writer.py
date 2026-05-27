@@ -123,10 +123,12 @@ def build_measures(positions, cluster_centers, duration_names, barline_xs,
     current_measure = []
 
     for ci, pos in enumerate(positions):
+        is_tied = pos.get('_tied', False)
         beat = {
-            'notes': {s: fret for s, fret in pos.items()},
+            'notes': {s: fret for s, fret in pos.items() if s != '_tied'},
             'duration_name': duration_names[ci],
             'techniques': techniques.get(ci),
+            'tied': is_tied,  # 延音音符标记（只有符干无品位数字）
         }
         current_measure.append(beat)
         if barline_after[ci]:
@@ -159,7 +161,7 @@ def _pitch_element(parent, string_num, fret_num):
 
 
 def _note_element(measure_el, string_num, fret_num, duration_name,
-                  is_chord=False, is_rest=False, techniques=None):
+                  is_chord=False, is_rest=False, techniques=None, is_first_note=True):
     """
     在 measure_el 下添加一个 <note> 元素。
     string_num: 1-6（MusicXML 弦号，1=最高音弦）
@@ -168,6 +170,8 @@ def _note_element(measure_el, string_num, fret_num, duration_name,
     is_chord: True 表示与前一个音符同时发声（和弦）
     is_rest: True 表示休止符
     techniques: dict，包含 hammer_on/pull_off/slide/grace_note 标志
+    is_first_note: True 表示该 beat 的第一个音符（写全部技法），
+                   False 表示和弦音符（只写 slide，其他技法不重复）
     """
     xml_type, divs, dotted = DURATION_TO_XML.get(
         duration_name, ('quarter', 16, False)
@@ -188,26 +192,61 @@ def _note_element(measure_el, string_num, fret_num, duration_name,
     if dotted:
         SubElement(note, 'dot')
 
+    # <time-modification>：连音组时值修正（只写在第一个音符上）
+    tuplet_info = (techniques.get('tuplet') if techniques else None) if is_first_note else None
+    if tuplet_info:
+        tm = SubElement(note, 'time-modification')
+        SubElement(tm, 'actual-notes').text = str(tuplet_info['actual'])
+        SubElement(tm, 'normal-notes').text = str(tuplet_info['normal'])
+
+    # <tie> 元素（音符级别，影响播放）（只写在第一个音符上）
+    tie_type = (techniques.get('tie') if techniques else None) if is_first_note else None
+    if tie_type and not is_rest:
+        if tie_type in ('start', 'start_stop'):
+            SubElement(note, 'tie', type='start')
+        if tie_type in ('stop', 'start_stop'):
+            SubElement(note, 'tie', type='stop')
+
     if not is_rest:
         notations = SubElement(note, 'notations')
+
+        # <tied> 元素（notations 级别，影响显示）（只写在第一个音符上）
+        if tie_type:
+            if tie_type in ('stop', 'start_stop'):
+                SubElement(notations, 'tied', type='stop')
+            if tie_type in ('start', 'start_stop'):
+                SubElement(notations, 'tied', type='start')
+
+        # <slide> 元素（notations 直接子元素，alphaTab/_parseSlide 在此层级读取）
+        # MusicXML 规范：<slide> 是 <notations> 的直接子元素，不在 <technical> 里
+        # slide_start/slide_stop 现在是 int（弦索引 0-based）或 None
+        # 只对匹配弦的音符写 <slide>，所有音符（包括和弦）都参与判断
+        if techniques:
+            note_string_idx = string_num - 1  # 1-based 转 0-based
+            slide_start_val = techniques.get('slide_start')
+            slide_stop_val  = techniques.get('slide_stop')
+            # 只有明确的 int 弦索引才写，None 表示未能确定弦号，跳过
+            if isinstance(slide_start_val, int) and note_string_idx == slide_start_val:
+                slide_el = SubElement(notations, 'slide', number='1', type='start')
+                slide_el.set('line-type', 'solid')
+            if isinstance(slide_stop_val, int) and note_string_idx == slide_stop_val:
+                slide_el = SubElement(notations, 'slide', number='1', type='stop')
+                slide_el.set('line-type', 'solid')
+
+        # <tuplet> 元素（连音组显示标记，仅在起始音符上写 start）
+        if tuplet_info:
+            SubElement(notations, 'tuplet', type='start', number='1')
+
         technical = SubElement(notations, 'technical')
         SubElement(technical, 'string').text = str(string_num)
         SubElement(technical, 'fret').text = str(fret_num)
 
-        # 技法标注
-        if techniques:
+        # 技法标注（hammer-on / pull-off 在 <technical> 里，只写在第一个音符上）
+        if techniques and is_first_note:
             if techniques.get('hammer_on'):
                 SubElement(technical, 'hammer-on', number='1', type='start').text = 'H'
             if techniques.get('pull_off'):
                 SubElement(technical, 'pull-off', number='1', type='start').text = 'P'
-            if techniques.get('slide'):
-                slide_el = SubElement(technical, 'slide', number='1', type='start')
-                slide_el.set('line-type', 'solid')
-
-        # 装饰音标注（ornaments）：用 trill-mark 表示装饰音弧线
-        if techniques and techniques.get('grace_note'):
-            ornaments = SubElement(notations, 'ornaments')
-            SubElement(ornaments, 'trill-mark')
 
     return note
 
@@ -221,7 +260,8 @@ def _rest_element(measure_el, duration_name):
 # 主序列化函数
 # ─────────────────────────────────────────────
 
-def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100):
+def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100,
+                   text_directions=None):
     """
     将所有行的小节数据构建成完整的 MusicXML ElementTree。
 
@@ -231,7 +271,11 @@ def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100):
         ...
     ]
     每个 measure 是 beat 列表，每个 beat 是 {'notes': {s_idx: fret_str}, 'duration_name': ...}
+    text_directions: list of {'measure_idx': int, 'text': str, 'placement': 'above'|'below'}
+                     在指定小节前插入文字方向标记（如 let ring）
     """
+    if text_directions is None:
+        text_directions = []
     # 展平所有小节（所有行连续）
     all_measures = []
     for row in all_measures_by_row:
@@ -239,6 +283,28 @@ def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100):
 
     # ── 根元素 ──
     score = Element('score-partwise', version='4.0')
+
+    # ── 页面布局（A4 横向，宽边距，让谱子主体更宽）──
+    # MusicXML tenths 单位：scaling 定义 1 staff-space = N tenths，
+    # 这里用 40 tenths = 7mm（标准六线谱间距），则 1 tenth = 0.175mm
+    # A4 横向：297mm × 210mm → 297/0.175 ≈ 1697 tenths × 210/0.175 ≈ 1200 tenths
+    defaults = SubElement(score, 'defaults')
+    scaling = SubElement(defaults, 'scaling')
+    SubElement(scaling, 'millimeters').text = '7'
+    SubElement(scaling, 'tenths').text = '40'
+    page_layout = SubElement(defaults, 'page-layout')
+    SubElement(page_layout, 'page-height').text = '1697'   # 297mm
+    SubElement(page_layout, 'page-width').text = '1200'    # 210mm（A4 横向高度作为宽度）
+    page_margins = SubElement(page_layout, 'page-margins', type='both')
+    SubElement(page_margins, 'left-margin').text = '57'    # 10mm
+    SubElement(page_margins, 'right-margin').text = '57'   # 10mm
+    SubElement(page_margins, 'top-margin').text = '57'     # 10mm
+    SubElement(page_margins, 'bottom-margin').text = '57'  # 10mm
+    system_layout = SubElement(defaults, 'system-layout')
+    system_margins = SubElement(system_layout, 'system-margins')
+    SubElement(system_margins, 'left-margin').text = '0'
+    SubElement(system_margins, 'right-margin').text = '0'
+    SubElement(system_layout, 'system-distance').text = '150'
 
     # ── 标题 ──
     work = SubElement(score, 'work')
@@ -267,6 +333,10 @@ def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100):
             attrs = SubElement(measure_el, 'attributes')
             SubElement(attrs, 'divisions').text = str(DIVISIONS)
 
+            # 调号（C 大调，无升降号）
+            key_el = SubElement(attrs, 'key')
+            SubElement(key_el, 'fifths').text = '0'
+
             # 拍号（4/4）
             time_el = SubElement(attrs, 'time')
             SubElement(time_el, 'beats').text = '4'
@@ -292,15 +362,82 @@ def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100):
             SubElement(metronome, 'per-minute').text = str(tempo)
             SubElement(direction, 'sound', tempo=str(tempo))
 
+        # ── 文字方向标记（let ring 等）──
+        for td in text_directions:
+            if td.get('measure_idx') == m_idx:
+                dir_el = SubElement(measure_el, 'direction',
+                                    placement=td.get('placement', 'above'))
+                dt_el = SubElement(dir_el, 'direction-type')
+                SubElement(dt_el, 'words').text = td['text']
+
+        # ── sl. 滑弦文字标记 ──
+        # 对本小节内有 slide_start 的 beat 写 <direction><words>sl.</words></direction>
+        if measure_beats:
+            for beat in measure_beats:
+                bt = beat.get('techniques') or {}
+                if isinstance(bt.get('slide_start'), int):
+                    sl_dir = SubElement(measure_el, 'direction', placement='above')
+                    sl_dt = SubElement(sl_dir, 'direction-type')
+                    SubElement(sl_dt, 'words').text = 'sl.'
+                    break  # 每小节只写一次
+
         # ── 写音符 ──
         if not measure_beats:
             # 空小节：填一个全音符休止符
             _rest_element(measure_el, 'whole')
             continue
 
+        # 预处理 tied 标记：给延音音符的前一个 beat 加 tie_start，给延音音符自身加 tie_stop
+        for bi, beat in enumerate(measure_beats):
+            if beat.get('tied'):
+                beat['_tie_type'] = 'stop'
+                if bi > 0:
+                    prev = measure_beats[bi - 1]
+                    prev_tie = prev.get('_tie_type')
+                    if prev_tie == 'stop':
+                        prev['_tie_type'] = 'start_stop'
+                    else:
+                        prev['_tie_type'] = 'start'
+
         for beat in measure_beats:
             notes_dict = beat['notes']   # {s_idx(0-5): fret_str}
-            dur_name = beat['duration_name'] or 'eighth'  # 无时值时默认八分
+            beat_techniques = beat.get('techniques') or {}
+
+            # ── tied beat（孤立符干延音）：保留符干，不显示品位数字 ──
+            # alphaTab 看到 <tie type="stop"> 时会画符干和连音线弧，但不显示品位数字
+            if beat.get('tied'):
+                dur_name = beat['duration_name'] or 'eighth'
+                xml_type, divs, dotted = DURATION_TO_XML.get(dur_name, ('quarter', 16, False))
+                tie_pairs = []
+                for s_idx in sorted(notes_dict.keys()):
+                    if s_idx == '_tied':
+                        continue
+                    fret_str = notes_dict[s_idx]
+                    try:
+                        fret_num = int(fret_str)
+                    except (ValueError, TypeError):
+                        continue
+                    tie_pairs.append((s_idx + 1, fret_num))  # xml_string, fret_num
+                if not tie_pairs:
+                    continue
+                for i, (xml_string, fret_num) in enumerate(tie_pairs):
+                    note = SubElement(measure_el, 'note')
+                    if i > 0:
+                        SubElement(note, 'chord')
+                    _pitch_element(note, xml_string, fret_num)
+                    SubElement(note, 'duration').text = str(divs)
+                    SubElement(note, 'type').text = xml_type
+                    if dotted:
+                        SubElement(note, 'dot')
+                    # tie stop：播放器延音，同时告知渲染器不显示品位数字
+                    SubElement(note, 'tie', type='stop')
+                    notations = SubElement(note, 'notations')
+                    SubElement(notations, 'tied', type='stop')
+                    # 保留 <technical><string><fret>，alphaTab 需要它来定位符干位置
+                    technical = SubElement(notations, 'technical')
+                    SubElement(technical, 'string').text = str(xml_string)
+                    SubElement(technical, 'fret').text = str(fret_num)
+                continue  # 跳过后面的普通音符写入
 
             # 按弦排序（s_idx 0=e, 5=E → xml string 1=e, 6=E）
             string_fret_pairs = []
@@ -316,13 +453,66 @@ def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100):
             if not string_fret_pairs:
                 continue
 
-            # 第一个音符正常写，其余加 <chord/>
-            beat_techniques = beat.get('techniques')
+            # ── 滑弦起始音符：duration_name=None 且有 slide_start → 作为 grace note 写入 ──
+            slide_start_val = beat_techniques.get('slide_start')
+            is_slide_grace = (beat['duration_name'] is None
+                              and isinstance(slide_start_val, int))
+            if is_slide_grace:
+                for gi, (xml_string, fret_num) in enumerate(string_fret_pairs):
+                    grace_note = SubElement(measure_el, 'note')
+                    if gi > 0:
+                        SubElement(grace_note, 'chord')
+                    SubElement(grace_note, 'grace')
+                    _pitch_element(grace_note, xml_string, fret_num)
+                    SubElement(grace_note, 'duration').text = '4'  # 16th
+                    SubElement(grace_note, 'type').text = '16th'
+                    notations_g = SubElement(grace_note, 'notations')
+                    # 只对匹配弦写 slide start
+                    note_s_idx = xml_string - 1  # 1-based → 0-based
+                    if note_s_idx == slide_start_val:
+                        slide_el = SubElement(notations_g, 'slide', number='1', type='start')
+                        slide_el.set('line-type', 'solid')
+                    technical_g = SubElement(notations_g, 'technical')
+                    SubElement(technical_g, 'string').text = str(xml_string)
+                    SubElement(technical_g, 'fret').text = str(fret_num)
+                continue  # 跳过后面的普通音符写入
+
+            dur_name = beat['duration_name'] or 'eighth'  # 无时值时默认八分
+
+            # 装饰音前置音符（grace notes，来自 grace_frets）
+            grace_frets = beat_techniques.get('grace_frets') if beat_techniques else None
+            if grace_frets:
+                # 按弦排序写装饰音音符
+                grace_pairs = sorted(grace_frets, key=lambda e: e['string'])
+                for gi, entry in enumerate(grace_pairs):
+                    xml_string_g = entry['string'] + 1  # 0-based → 1-based
+                    fret_g = entry['fret']
+                    grace_note = SubElement(measure_el, 'note')
+                    if gi > 0:
+                        SubElement(grace_note, 'chord')
+                    SubElement(grace_note, 'grace')  # 装饰音标记
+                    _pitch_element(grace_note, xml_string_g, fret_g)
+                    SubElement(grace_note, 'duration').text = '4'  # 16th
+                    SubElement(grace_note, 'type').text = '16th'
+                    notations_g = SubElement(grace_note, 'notations')
+                    technical_g = SubElement(notations_g, 'technical')
+                    SubElement(technical_g, 'string').text = str(xml_string_g)
+                    SubElement(technical_g, 'fret').text = str(fret_g)
+
+            # 合并 tie 标记到 techniques
+            tie_type = beat.get('_tie_type')
+            if tie_type:
+                beat_techniques = dict(beat_techniques) if beat_techniques else {}
+                beat_techniques['tie'] = tie_type
+
+            # 所有音符都传入 techniques，以便每个音符自己判断是否需要写 <slide>
+            # 其他技法（hammer_on/pull_off/tie/tuplet）只写在第一个音符上（is_first_note）
             for i, (xml_string, fret_num) in enumerate(string_fret_pairs):
                 _note_element(
                     measure_el, xml_string, fret_num, dur_name,
                     is_chord=(i > 0),
-                    techniques=beat_techniques if i == 0 else None
+                    techniques=beat_techniques,
+                    is_first_note=(i == 0)
                 )
 
     return ElementTree(score)
