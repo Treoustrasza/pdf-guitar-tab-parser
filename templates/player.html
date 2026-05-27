@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Guitar Tab Player</title>
+
+  <!-- alphaTab CDN（含 SoundFont 合成器） -->
+  <script src="https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/alphaTab.min.js"></script>
+
+  <style>
+    :root {
+      --bg:       #faf8f4;
+      --paper:    #f0ebe2;
+      --border:   #c9b8a8;
+      --text:     #3d3028;
+      --text-dim: #7a6a5a;
+      --pink:     #d4829a;
+      --pink-dim: #c07088;
+      --lavender: #9b8ec4;
+      --blue:     #7aaabb;
+      --green:    #7a9a88;
+      --shadow:   rgba(60,40,20,0.15);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Georgia', serif;
+      min-height: 100%;
+    }
+
+    /* ── 播放器控制栏 ── */
+    #player-bar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--paper);
+      border-bottom: 1px solid var(--border);
+      box-shadow: 0 2px 8px var(--shadow);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    /* 播放/暂停按钮 */
+    #btn-play {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 1.5px solid var(--pink-dim);
+      background: var(--paper);
+      color: var(--pink-dim);
+      font-size: 1.1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
+      box-shadow: 1px 2px 4px var(--shadow);
+      flex-shrink: 0;
+    }
+    #btn-play:hover { background: rgba(212,130,154,0.1); box-shadow: 2px 3px 6px var(--shadow); }
+    #btn-play:active { transform: scale(0.93); }
+    #btn-play.playing { border-color: var(--lavender); color: var(--lavender); }
+
+    /* 停止按钮 */
+    #btn-stop {
+      width: 32px;
+      height: 32px;
+      border-radius: 4px;
+      border: 1.5px solid var(--border);
+      background: var(--paper);
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+    #btn-stop:hover { background: rgba(100,80,60,0.08); }
+
+    /* 进度条 */
+    #progress-wrap {
+      flex: 1;
+      min-width: 120px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    #progress-track {
+      height: 4px;
+      background: rgba(150,130,110,0.2);
+      border-radius: 99px;
+      cursor: pointer;
+      position: relative;
+      border: 1px solid var(--border);
+    }
+    #progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--pink-dim), var(--lavender));
+      border-radius: 99px;
+      width: 0%;
+      transition: width 0.1s linear;
+      pointer-events: none;
+    }
+    #time-label {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      font-style: italic;
+      letter-spacing: 0.5px;
+      text-align: right;
+    }
+
+    /* 速度控制 */
+    .ctrl-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      flex-shrink: 0;
+    }
+    .ctrl-label {
+      font-size: 0.6rem;
+      color: var(--text-dim);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    .ctrl-group input[type="range"] {
+      width: 72px;
+      accent-color: var(--pink-dim);
+      cursor: pointer;
+    }
+    .ctrl-value {
+      font-size: 0.68rem;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+
+    /* 状态指示 */
+    #player-status {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      font-style: italic;
+      letter-spacing: 0.5px;
+      flex-shrink: 0;
+    }
+    #player-status.loading { color: var(--lavender); }
+    #player-status.ready   { color: var(--green); }
+    #player-status.error   { color: #b86060; }
+
+    /* ── 乐谱区域 ── */
+    #score-wrap {
+      padding: 16px 8px 32px;
+    }
+
+    /* alphaTab 渲染容器 */
+    #alphatab {
+      background: var(--bg);
+    }
+
+    /* 光标高亮（alphaTab 默认注入） */
+    .at-cursor-bar {
+      background: rgba(155,142,196,0.12);
+    }
+    .at-cursor-beat {
+      background: rgba(212,130,154,0.25);
+      width: 3px !important;
+      border-radius: 2px;
+    }
+    .at-selection div {
+      background: rgba(122,170,187,0.2);
+    }
+
+    /* 加载遮罩 */
+    #loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      z-index: 200;
+      transition: opacity 0.4s;
+    }
+    #loading-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .loading-spinner {
+      width: 36px;
+      height: 36px;
+      border: 2px solid var(--border);
+      border-top-color: var(--pink-dim);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text {
+      font-size: 0.82rem;
+      color: var(--text-dim);
+      font-style: italic;
+      letter-spacing: 1px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 加载遮罩 -->
+  <div id="loading-overlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-text" id="loading-msg">正在加载乐谱…</div>
+  </div>
+
+  <!-- 播放器控制栏 -->
+  <div id="player-bar">
+    <button id="btn-play" title="播放 / 暂停">▶</button>
+    <button id="btn-stop" title="停止">■</button>
+
+    <div id="progress-wrap">
+      <div id="progress-track">
+        <div id="progress-fill"></div>
+      </div>
+      <div id="time-label">0:00 / 0:00</div>
+    </div>
+
+    <div class="ctrl-group">
+      <span class="ctrl-label">速度</span>
+      <input type="range" id="speed-slider" min="25" max="200" value="100" step="5" />
+      <span class="ctrl-value" id="speed-val">100%</span>
+    </div>
+
+    <div class="ctrl-group">
+      <span class="ctrl-label">音量</span>
+      <input type="range" id="volume-slider" min="0" max="100" value="80" step="5" />
+      <span class="ctrl-value" id="volume-val">80%</span>
+    </div>
+
+    <span id="player-status" class="loading">加载中…</span>
+  </div>
+
+  <!-- 乐谱渲染区 -->
+  <div id="score-wrap">
+    <div id="alphatab"></div>
+  </div>
+
+  <script>
+    const TASK_ID = {{ task_id | tojson }};
+    const MUSICXML_URL = `/api/musicxml/${TASK_ID}`;
+
+    // ── 初始化 alphaTab ──
+    const container = document.getElementById('alphatab');
+
+    const api = new alphaTab.AlphaTabApi(container, {
+      core: {
+        // 使用 CDN 上的 worker 和字体
+        scriptFile: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/alphaTab.min.js',
+        fontDirectory: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/font/',
+      },
+      display: {
+        layoutMode: alphaTab.LayoutMode.Page,
+        scale: 0.95,
+      },
+      notation: {
+        notationMode: alphaTab.NotationMode.GuitarPro,
+        rhythmMode: alphaTab.TabRhythmMode.ShowWithBars,
+      },
+      player: {
+        enablePlayer: true,
+        enableCursor: true,
+        enableUserInteraction: true,
+        // SoundFont：使用 alphaTab 官方提供的免费 SoundFont
+        soundFont: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/soundfont/sonivox.sf2',
+        scrollMode: alphaTab.ScrollMode.Continuous,
+      },
+    });
+
+    // ── UI 元素 ──
+    const btnPlay       = document.getElementById('btn-play');
+    const btnStop       = document.getElementById('btn-stop');
+    const progressFill  = document.getElementById('progress-fill');
+    const progressTrack = document.getElementById('progress-track');
+    const timeLabel     = document.getElementById('time-label');
+    const speedSlider   = document.getElementById('speed-slider');
+    const speedVal      = document.getElementById('speed-val');
+    const volumeSlider  = document.getElementById('volume-slider');
+    const volumeVal     = document.getElementById('volume-val');
+    const statusEl      = document.getElementById('player-status');
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const loadingMsg    = document.getElementById('loading-msg');
+
+    let totalMs = 0;
+    let isPlaying = false;
+
+    // ── 格式化时间 ──
+    function fmtTime(ms) {
+      const s = Math.floor(ms / 1000);
+      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    }
+
+    // ── alphaTab 事件 ──
+    api.renderStarted.on(() => {
+      loadingMsg.textContent = '正在渲染乐谱…';
+    });
+
+    api.renderFinished.on(() => {
+      loadingOverlay.classList.add('hidden');
+      statusEl.textContent = '就绪';
+      statusEl.className = 'ready';
+    });
+
+    api.soundFontLoad.on(e => {
+      const pct = Math.round(e.loaded / e.total * 100);
+      loadingMsg.textContent = `加载音色库… ${pct}%`;
+    });
+
+    api.soundFontLoaded.on(() => {
+      statusEl.textContent = '就绪';
+      statusEl.className = 'ready';
+    });
+
+    api.playerStateChanged.on(e => {
+      isPlaying = e.state === alphaTab.synth.PlayerState.Playing;
+      btnPlay.textContent = isPlaying ? '⏸' : '▶';
+      btnPlay.classList.toggle('playing', isPlaying);
+      statusEl.textContent = isPlaying ? '播放中' : (e.state === alphaTab.synth.PlayerState.Paused ? '已暂停' : '就绪');
+    });
+
+    api.playerPositionChanged.on(e => {
+      totalMs = e.endTime;
+      const pct = totalMs > 0 ? (e.currentTime / totalMs * 100) : 0;
+      progressFill.style.width = pct + '%';
+      timeLabel.textContent = `${fmtTime(e.currentTime)} / ${fmtTime(totalMs)}`;
+    });
+
+    api.error.on(e => {
+      statusEl.textContent = '错误';
+      statusEl.className = 'error';
+      loadingOverlay.classList.add('hidden');
+      console.error('alphaTab error:', e);
+    });
+
+    // ── 控制按钮 ──
+    btnPlay.addEventListener('click', () => api.playPause());
+    btnStop.addEventListener('click', () => api.stop());
+
+    // ── 进度条点击跳转 ──
+    progressTrack.addEventListener('click', e => {
+      if (totalMs <= 0) return;
+      const rect = progressTrack.getBoundingClientRect();
+      const ratio = (e.clientX - rect.left) / rect.width;
+      api.tickPosition = Math.round(ratio * api.player.tickCache?.masterBarLookup?.at(-1)?.end ?? 0);
+    });
+
+    // ── 速度控制 ──
+    speedSlider.addEventListener('input', () => {
+      const v = parseInt(speedSlider.value);
+      speedVal.textContent = v + '%';
+      api.playbackSpeed = v / 100;
+    });
+
+    // ── 音量控制 ──
+    volumeSlider.addEventListener('input', () => {
+      const v = parseInt(volumeSlider.value);
+      volumeVal.textContent = v + '%';
+      api.masterVolume = v / 100;
+    });
+
+    // ── 加载 MusicXML ──
+    fetch(MUSICXML_URL)
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.arrayBuffer();
+      })
+      .then(buf => {
+        api.load(new Uint8Array(buf));
+      })
+      .catch(err => {
+        loadingMsg.textContent = '加载失败：' + err.message;
+        statusEl.textContent = '加载失败';
+        statusEl.className = 'error';
+      });
+  </script>
+</body>
+</html>

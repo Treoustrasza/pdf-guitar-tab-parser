@@ -440,7 +440,14 @@
       background: var(--border);
       border-radius: 99px;
     }
-    #preview-img { display: block; max-width: none; }
+    #preview-frame {
+      display: block;
+      width: 100%;
+      height: 600px;
+      border: none;
+      background: #faf8f4;
+      border-radius: 2px;
+    }
     #preview-loading {
       padding: 24px;
       text-align: center;
@@ -584,7 +591,7 @@
       </div>
       <div id="preview-scroll">
         <div id="preview-loading">正在生成预览…</div>
-        <img id="preview-img" src="" alt="六线谱预览" style="display:none" />
+        <iframe id="preview-frame" style="display:none" title="六线谱预览"></iframe>
       </div>
     </div>
 
@@ -622,7 +629,7 @@
     const dlAscii       = document.getElementById('dl-ascii');
     const previewArea   = document.getElementById('preview-area');
     const previewScroll = document.getElementById('preview-scroll');
-    const previewImg    = document.getElementById('preview-img');
+    const previewFrame  = document.getElementById('preview-frame');
     const previewLoad   = document.getElementById('preview-loading');
     const previewToggle = document.getElementById('preview-toggle');
 
@@ -720,29 +727,24 @@
       previewToggle.textContent   = previewOpen ? '收起' : '展开';
     });
 
-    // ── 加载预览 SVG ──
+    // ── 加载预览（alphaTab HTML via iframe）──
     function loadPreview(taskId) {
       previewArea.style.display = 'flex';
       previewLoad.style.display = 'block';
-      previewImg.style.display  = 'none';
+      previewFrame.style.display = 'none';
       previewOpen = true;
       previewScroll.style.display = 'block';
       previewToggle.textContent   = '收起';
 
-      // 用 blob URL 加载 SVG，避免跨域问题
-      fetch(`/api/preview/${taskId}`)
-        .then(r => r.blob())
-        .then(blob => {
-          const url = URL.createObjectURL(blob);
-          previewImg.onload = () => {
-            previewLoad.style.display = 'none';
-            previewImg.style.display  = 'block';
-          };
-          previewImg.src = url;
-        })
-        .catch(() => {
-          previewLoad.textContent = '预览生成失败';
-        });
+      // player.html 加载完成后隐藏 loading 提示
+      previewFrame.onload = () => {
+        previewLoad.style.display  = 'none';
+        previewFrame.style.display = 'block';
+      };
+      previewFrame.onerror = () => {
+        previewLoad.textContent = '预览生成失败';
+      };
+      previewFrame.src = `/api/preview/${taskId}`;
     }
 
     // ── 重置 ──
@@ -754,7 +756,7 @@
       document.getElementById('title-input').value = '';
       document.getElementById('tempo-input').value = '100';
       previewArea.style.display = 'none';
-      previewImg.src = '';
+      previewFrame.src = '';
       previewLoad.textContent = '正在生成预览…';
       setUIState('idle');
       hideError();

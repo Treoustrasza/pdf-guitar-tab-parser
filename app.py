@@ -7,7 +7,6 @@ import uuid
 import threading
 from flask import Flask, request, jsonify, send_file, render_template, Response
 from tab_parser import convert_pdf_to_musicxml, parse_tab_page
-from tab_svg import render_svg
 import pdfplumber
 
 app = Flask(__name__)
@@ -123,13 +122,48 @@ def download(task_id, fmt):
 
 @app.route('/api/preview/<task_id>')
 def preview(task_id):
+    """返回 alphaTab 播放器 HTML 页面（浏览器端渲染 + 播放）"""
     task = tasks.get(task_id)
     if not task or task['status'] != 'done':
         return jsonify({'error': '任务未完成'}), 404
-    rows  = task.get('rows', [])
-    title = task.get('title', '')
-    svg   = render_svg(rows, title=title)
-    return Response(svg, mimetype='image/svg+xml')
+    return render_template('player.html', task_id=task_id)
+
+
+@app.route('/api/musicxml/<task_id>')
+def get_musicxml(task_id):
+    """提供 MusicXML 文件内容供前端 alphaTab 加载"""
+    task = tasks.get(task_id)
+    if not task or task['status'] != 'done':
+        return jsonify({'error': '任务未完成'}), 404
+
+    musicxml_path = task.get('musicxml')
+    if not musicxml_path or not os.path.exists(musicxml_path):
+        return jsonify({'error': 'MusicXML 文件不存在'}), 404
+
+    return send_file(
+        musicxml_path,
+        mimetype='application/vnd.recordare.musicxml+xml',
+        as_attachment=False,
+    )
+
+
+@app.route('/api/dev/inject_task', methods=['POST'])
+def dev_inject_task():
+    """仅供开发测试：直接注入一个 done 状态的任务（需要 DEBUG=True）"""
+    if not app.debug:
+        return jsonify({'error': '仅限 debug 模式'}), 403
+    data = request.get_json()
+    task_id = data.get('task_id', 'dev-test')
+    musicxml_path = data.get('musicxml_path')
+    if not musicxml_path or not os.path.exists(musicxml_path):
+        return jsonify({'error': 'musicxml_path 不存在'}), 400
+    tasks[task_id] = {
+        'status': 'done',
+        'musicxml': musicxml_path,
+        'title': data.get('title', 'Test'),
+        'rows': [],
+    }
+    return jsonify({'task_id': task_id, 'preview_url': f'/api/preview/{task_id}'})
 
 
 if __name__ == '__main__':

@@ -2,26 +2,33 @@
 tab_svg.py
 将解析好的六线谱数据渲染为 SVG 字符串。
 
-时值标注：在谱线上方绘制标准音符图形
+渲染风格：还原原始 PDF 吉他六线谱格式
+  - 符头紧贴谱线上方（第一弦上方约 1 个弦间距处）
+  - 符干从符头向上伸出
+  - 符尾从符干顶端向右弯曲
+  - 品位数字写在对应弦线上，数字处弦线断开（白色底遮住）
+  - 附点在符头右侧
+
+时值对应：
   全音符   —— 空心椭圆，无符干
-  二分音符 —— 空心椭圆 + 符干
-  四分音符 —— 实心椭圆 + 符干
+  二分音符 —— 空心椭圆 + 符干（向上）
+  四分音符 —— 实心椭圆 + 符干（向上）
   八分音符 —— 实心椭圆 + 符干 + 1条符尾
   十六分   —— 实心椭圆 + 符干 + 2条符尾
   三十二分 —— 实心椭圆 + 符干 + 3条符尾
   附点     —— 符头右侧加实心小圆点
 """
 
-STRING_GAP   = 14      # 弦间距 px
-LINE_H       = STRING_GAP * 5   # 六线谱总高度
-COL_MIN      = 22      # 最小列宽（稍宽，给音符图形留空间）
-COL_PAD      = 8       # 列左右留白
-FONT_FRET    = 11      # 品位数字字号
-FONT_STR     = 10      # 弦名字号
-ROW_GAP      = 56      # 行间距（谱线底部到下一行顶部，加高给音符图形）
-NOTE_AREA_H  = 28      # 谱线上方音符区域高度
-MARGIN_LEFT  = 32      # 左边距（弦名区域）
-MARGIN_TOP   = 24      # 顶部留白
+STRING_GAP   = 13      # 弦间距 px
+LINE_H       = STRING_GAP * 5   # 六线谱总高度（5个间距，6条线）
+COL_MIN      = 20      # 最小列宽
+COL_PAD      = 6       # 列左右留白
+FONT_FRET    = 10      # 品位数字字号
+FONT_STR     = 9       # 弦名字号
+ROW_GAP      = 40      # 行间距（谱线底部到下一行顶部）
+NOTE_AREA_H  = 28      # 谱线上方音符区域高度（符干在这里向上伸展）
+MARGIN_LEFT  = 28      # 左边距（弦名区域）
+MARGIN_TOP   = 20      # 顶部留白
 MARGIN_RIGHT = 16
 MARGIN_BOT   = 16
 
@@ -31,92 +38,94 @@ STRING_NAMES = ['e', 'B', 'G', 'D', 'A', 'E']
 NOTE_COLOR   = '#9b8ec4'
 NOTE_STROKE  = '#7a6a9a'
 
-
-# ─────────────────────────────────────────────
-# 音符图形绘制
-# ─────────────────────────────────────────────
-
-# duration_name → (符头是否实心, 符干长度, 符尾数量, 是否附点)
-NOTE_SHAPE = {
-    'whole':    (False, 0,  0, False),
-    'half':     (False, 14, 0, False),
-    'half.':    (False, 14, 0, True),
-    'quarter':  (True,  14, 0, False),
-    'quarter.': (True,  14, 0, True),
-    'eighth':   (True,  14, 1, False),
-    'eighth.':  (True,  14, 1, True),
-    '16th':     (True,  14, 2, False),
-    '16th.':    (True,  14, 2, True),
-    '32nd':     (True,  14, 3, False),
-    '32nd.':    (True,  14, 3, True),
-    '64th':     (True,  14, 4, False),
-}
-
 # 符头椭圆尺寸
-HEAD_RX = 4.0   # 水平半径
-HEAD_RY = 2.8   # 垂直半径（稍扁，像真实音符）
+HEAD_RX = 3.5   # 水平半径（更小更紧凑）
+HEAD_RY = 2.3   # 垂直半径
 HEAD_TILT = -20  # 倾斜角度（度）
 
+# 符干高度（从符头到符干顶端）
+STEM_HEIGHT = 20
 
-def _draw_note(cx, note_y, dur_name):
+# duration_name → (符头是否实心, 符尾数量, 是否附点)
+NOTE_SHAPE = {
+    'whole':    (False, 0, False),
+    'half':     (False, 0, False),
+    'half.':    (False, 0, True),
+    'quarter':  (True,  0, False),
+    'quarter.': (True,  0, True),
+    'eighth':   (True,  1, False),
+    'eighth.':  (True,  1, True),
+    '16th':     (True,  2, False),
+    '16th.':    (True,  2, True),
+    '32nd':     (True,  3, False),
+    '32nd.':    (True,  3, True),
+    '64th':     (True,  4, False),
+}
+
+
+def _draw_note(cx, head_y, dur_name):
     """
-    在 (cx, note_y) 处绘制一个音符图形，返回 SVG 片段列表。
-    note_y 是符头中心的 y 坐标。
-    符干向上生长（y 减小方向）。
+    绘制一个音符图形，返回 SVG 片段列表。
+
+    cx     : 符头中心 x
+    head_y : 符头中心 y（紧贴谱线上方）
+    dur_name: 时值名称
+
+    符干方向：向上（y 减小）
+    符尾：从符干顶端向右弯曲
     """
     shape = NOTE_SHAPE.get(dur_name)
     if shape is None:
         return []
 
-    filled, stem_len, tails, dotted = shape
+    filled, tails, dotted = shape
     parts = []
 
     # ── 符头 ──
     fill   = NOTE_COLOR if filled else 'none'
     stroke = NOTE_STROKE
-    sw     = 1.2 if not filled else 0
+    sw     = 1.3 if not filled else 0
 
     parts.append(
-        f'<ellipse cx="{cx:.1f}" cy="{note_y:.1f}" '
+        f'<ellipse cx="{cx:.1f}" cy="{head_y:.1f}" '
         f'rx="{HEAD_RX}" ry="{HEAD_RY}" '
         f'fill="{fill}" stroke="{stroke}" stroke-width="{sw}" '
-        f'transform="rotate({HEAD_TILT},{cx:.1f},{note_y:.1f})"/>'
+        f'transform="rotate({HEAD_TILT},{cx:.1f},{head_y:.1f})"/>'
     )
 
     # ── 附点 ──
     if dotted:
         dot_x = cx + HEAD_RX + 3.5
-        dot_y = note_y - 1.5
+        dot_y = head_y - 1.0
         parts.append(
             f'<circle cx="{dot_x:.1f}" cy="{dot_y:.1f}" r="1.5" '
             f'fill="{NOTE_COLOR}"/>'
         )
 
-    # ── 符干 ──
-    if stem_len > 0:
-        stem_x  = cx + HEAD_RX - 0.5   # 符干贴符头右侧
-        stem_y1 = note_y - 1            # 符干底（符头顶部附近）
-        stem_y2 = note_y - stem_len     # 符干顶
+    # ── 符干（全音符无符干）—— 向上伸出 ──
+    has_stem = dur_name != 'whole'
+    if has_stem:
+        stem_x   = cx + HEAD_RX - 0.8   # 符干贴符头右侧
+        stem_bot = head_y - HEAD_RY + 1  # 符干底端（符头顶部附近）
+        stem_top = head_y - STEM_HEIGHT  # 符干顶端（向上）
+
         parts.append(
-            f'<line x1="{stem_x:.1f}" y1="{stem_y1:.1f}" '
-            f'x2="{stem_x:.1f}" y2="{stem_y2:.1f}" '
+            f'<line x1="{stem_x:.1f}" y1="{stem_bot:.1f}" '
+            f'x2="{stem_x:.1f}" y2="{stem_top:.1f}" '
             f'stroke="{NOTE_STROKE}" stroke-width="1.1"/>'
         )
 
-        # ── 符尾（旗帜）──
-        # 每条符尾是从符干顶向右下方的弧线
+        # ── 符尾（旗帜）—— 从符干顶端向右下弯曲 ──
         for i in range(tails):
-            ty  = stem_y2 + i * 4       # 每条符尾间距 4px
-            tx1 = stem_x
-            ty1 = ty
+            ty1 = stem_top + i * 5      # 每条符尾间距 5px，向下排列
             # 贝塞尔控制点：向右下弯
-            tcx = stem_x + 7
-            tcy = ty + 5
-            tx2 = stem_x + 5
-            ty2 = ty + 7
+            tcx = stem_x + 8
+            tcy = ty1 + 5
+            tx2 = stem_x + 6
+            ty2 = ty1 + 8
             parts.append(
-                f'<path d="M{tx1:.1f},{ty1:.1f} Q{tcx:.1f},{tcy:.1f} {tx2:.1f},{ty2:.1f}" '
-                f'stroke="{NOTE_STROKE}" stroke-width="1.1" fill="none" '
+                f'<path d="M{stem_x:.1f},{ty1:.1f} Q{tcx:.1f},{tcy:.1f} {tx2:.1f},{ty2:.1f}" '
+                f'stroke="{NOTE_STROKE}" stroke-width="1.2" fill="none" '
                 f'stroke-linecap="round"/>'
             )
 
@@ -130,7 +139,7 @@ def _draw_note(cx, note_y, dur_name):
 def _col_width(pos):
     """计算一个位置（beat）所需的列宽"""
     max_fret_w = max(
-        (len(pos.get(s, '')) for s in range(6) if pos.get(s)),
+        (len(str(pos.get(s, ''))) for s in range(6) if pos.get(s) is not None),
         default=1
     )
     return max(max_fret_w * 7 + COL_PAD * 2, COL_MIN)
@@ -142,8 +151,10 @@ def _col_width(pos):
 
 def _build_row_svg(row_data, row_top, total_width):
     """
-    渲染单行六线谱，返回 (SVG字符串, 行末x坐标)。
-    row_top 是谱线第一弦的 y 坐标（音符区域在其上方）。
+    渲染单行六线谱，返回 SVG 字符串。
+
+    row_top : 谱线第一弦（e弦）的 y 坐标
+    符头 y  : row_top - HEAD_Y_OFFSET（紧贴第一弦上方）
     """
     parts = []
     measures = row_data['measures']
@@ -158,7 +169,7 @@ def _build_row_svg(row_data, row_top, total_width):
             barline_after.append(is_last and m_idx < len(measures) - 1)
 
     if not beats:
-        return '', MARGIN_LEFT
+        return ''
 
     # 计算每列 x 坐标
     col_widths = [_col_width(b['notes']) for b in beats]
@@ -169,11 +180,13 @@ def _build_row_svg(row_data, row_top, total_width):
         x += w
     row_width = x + MARGIN_RIGHT
 
+    last_string_y = row_top + LINE_H
+
     # ── 弦名 ──
     for s_idx in range(6):
         sy = row_top + s_idx * STRING_GAP
         parts.append(
-            f'<text x="{MARGIN_LEFT - 8}" y="{sy + 4}" '
+            f'<text x="{MARGIN_LEFT - 6}" y="{sy + 4}" '
             f'text-anchor="end" font-size="{FONT_STR}" '
             f'fill="#7a6a5a" font-family="Special Elite, serif">'
             f'{STRING_NAMES[s_idx]}</text>'
@@ -192,7 +205,7 @@ def _build_row_svg(row_data, row_top, total_width):
     # ── 起始竖线 ──
     parts.append(
         f'<line x1="{MARGIN_LEFT}" y1="{row_top}" '
-        f'x2="{MARGIN_LEFT}" y2="{row_top + LINE_H}" '
+        f'x2="{MARGIN_LEFT}" y2="{last_string_y}" '
         f'stroke="#7a6a5a" stroke-width="1.2"/>'
     )
 
@@ -202,31 +215,33 @@ def _build_row_svg(row_data, row_top, total_width):
         cw  = col_widths[ci]
         mid = cx + cw / 2
 
-        # 音符图形（谱线上方 NOTE_AREA_H 区域内）
+        # 符头 y：紧贴第一弦上方（距第一弦约半个弦间距）
+        head_y = row_top - STRING_GAP * 0.55
+
+        # 音符图形（符头在谱线上方，符干向上）
         dur_name = beat.get('duration_name')
         if dur_name:
-            # 符头 y：谱线上方约 14px 处
-            note_y = row_top - 14
-            parts.extend(_draw_note(mid, note_y, dur_name))
+            parts.extend(_draw_note(mid, head_y, dur_name))
 
-        # 品位数字
+        # 品位数字（写在弦线上，白色底遮住弦线）
         notes = beat.get('notes', {})
         for s_idx in range(6):
             fret = notes.get(s_idx)
             if fret is None:
                 continue
             sy = row_top + s_idx * STRING_GAP
-            fw = len(str(fret)) * 7 + 4
-            # 白色底遮住弦线
+            fret_str = str(fret)
+            fw = len(fret_str) * 6.5 + 4
+            # 白色底遮住弦线（让数字"浮"在弦线上）
             parts.append(
-                f'<rect x="{mid - fw/2:.1f}" y="{sy - 7}" '
-                f'width="{fw}" height="13" fill="#f0ebe2"/>'
+                f'<rect x="{mid - fw/2:.1f}" y="{sy - 6}" '
+                f'width="{fw:.1f}" height="12" fill="#f0ebe2"/>'
             )
             parts.append(
                 f'<text x="{mid:.1f}" y="{sy + 4}" '
                 f'text-anchor="middle" font-size="{FONT_FRET}" '
                 f'fill="#3d3028" font-family="Special Elite, serif">'
-                f'{fret}</text>'
+                f'{fret_str}</text>'
             )
 
         # 小节线
@@ -234,7 +249,7 @@ def _build_row_svg(row_data, row_top, total_width):
             bx = cx + cw - 1
             parts.append(
                 f'<line x1="{bx:.1f}" y1="{row_top}" '
-                f'x2="{bx:.1f}" y2="{row_top + LINE_H}" '
+                f'x2="{bx:.1f}" y2="{last_string_y}" '
                 f'stroke="#7a6a5a" stroke-width="1.2"/>'
             )
 
@@ -242,11 +257,11 @@ def _build_row_svg(row_data, row_top, total_width):
     end_x = col_xs[-1] + col_widths[-1]
     parts.append(
         f'<line x1="{end_x:.1f}" y1="{row_top}" '
-        f'x2="{end_x:.1f}" y2="{row_top + LINE_H}" '
+        f'x2="{end_x:.1f}" y2="{last_string_y}" '
         f'stroke="#7a6a5a" stroke-width="1.2"/>'
     )
 
-    return '\n'.join(parts), end_x
+    return '\n'.join(parts)
 
 
 # ─────────────────────────────────────────────
@@ -273,7 +288,8 @@ def render_svg(all_rows, title=''):
         row_widths.append(w)
 
     svg_width  = max(row_widths) if row_widths else 400
-    row_height = LINE_H + ROW_GAP   # ROW_GAP 包含音符区域高度
+    # 每行高度 = 音符区（符干向上的空间）+ 谱线区 + 行间距
+    row_height = NOTE_AREA_H + LINE_H + ROW_GAP
     title_h    = 32 if title else 0
     svg_height = MARGIN_TOP + title_h + len(all_rows) * row_height + MARGIN_BOT
 
@@ -293,13 +309,12 @@ def render_svg(all_rows, title=''):
             f'{title}</text>'
         )
 
-    # 每行：row_top 是第一弦的 y，音符画在 row_top 上方
+    # 每行渲染
+    # row_top = 第一弦 y，音符区在其上方（NOTE_AREA_H 高度）
     for r_idx, row in enumerate(all_rows):
-        # NOTE_AREA_H 留给音符，再加一点间距
-        row_top = MARGIN_TOP + title_h + r_idx * row_height + NOTE_AREA_H + 4
-        result = _build_row_svg(row, row_top, svg_width)
-        if result:
-            row_svg, _ = result
+        row_top = MARGIN_TOP + title_h + r_idx * row_height + NOTE_AREA_H
+        row_svg = _build_row_svg(row, row_top, svg_width)
+        if row_svg:
             parts.append(row_svg)
 
     parts.append('</svg>')
