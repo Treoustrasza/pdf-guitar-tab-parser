@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Guitar Tab Player</title>
 
-  <!-- alphaTab CDN（含 SoundFont 合成器） -->
-  <script src="https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/alphaTab.min.js"></script>
+  <!-- alphaTab ローカル（パッチ済み） -->
+  <script src="/local/alphatab/alphaTab.min.js"></script>
 
   <style>
     :root {
@@ -263,8 +263,8 @@
 
     const api = new alphaTab.AlphaTabApi(container, {
       core: {
-        // 使用 CDN 上的 worker 和字体
-        scriptFile: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/alphaTab.min.js',
+        // Worker 需要完整 URL，用 location.origin 拼接本地路径
+        scriptFile: location.origin + '/local/alphatab/alphaTab.min.js',
         fontDirectory: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/font/',
       },
       display: {

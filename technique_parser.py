@@ -138,21 +138,79 @@ def _fret_font_size(page):
 # ─────────────────────────────────────────────
 # 击弦识别（字符 'H'）
 # ─────────────────────────────────────────────
-def find_hammer_ons(page, string_group, cluster_centers, fret_size=None):
+def _find_hammer_arc_lines(page, string_group):
     """
-    识别击弦标记（字符 'H'）。
+    找弦线组上方的击弦/勾弦弧线（水平短线段，y_span≈0，在 group_top 上方）。
+    Guitar Pro 导出 PDF 时，击弦弧线是水平短线段（非真正的弧形曲线）。
+
+    返回：list of {'x0': float, 'x1': float, 'cx': float, 'top': float}
+    """
+    group_top, group_bottom, string_gap, _ = _group_metrics(string_group)
+    arc_lines = []
+    for curve in page.curves:
+        pts = curve.get('pts', [])
+        if len(pts) < 2:
+            continue
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        x_min, x_max = min(xs), max(xs)
+        top = page.height - max(ys)
+        y_span = max(ys) - min(ys)
+        x_span = x_max - x_min
+        # 水平短线段（y_span < 1pt），在弦线组上方或第1弦附近（top ≤ group_top + 1×gap），
+        # x_span 在 3~25pt 之间（排除弦线本身和过长的线段）
+        if (y_span < 1.0 and 3 < x_span < 25
+                and group_top - string_gap * 4 <= top <= group_top + string_gap):
+            arc_lines.append({
+                'x0': x_min, 'x1': x_max,
+                'cx': (x_min + x_max) / 2,
+                'top': top,
+            })
+    return arc_lines
+
+
+def find_hammer_ons(page, string_group, cluster_centers, fret_size=None, positions=None):
+    """
+    识别击弦标记（字符 'H'），参考 find_slides 的定位策略。
 
     判断条件（不依赖字体名/固定字号）：
       1. 文字内容为大写 'H'
       2. 字号 < 品位数字字号（技法标注字号通常更小）
       3. 位于弦线组标注区内
+
+    定位策略（双重策略，优先弧线）：
+      策略A（有弧线时）：
+        - 找 H 字符附近（x 范围内）的水平短弧线（在 group_top 上方）
+        - 弧线左端左侧最近的 cluster = ci_start（起始音符）
+        - 弧线右端右侧最近的 cluster = ci_stop（目标音符）
+      策略B（无弧线时，回退）：
+        - H 字符 x0 右侧最近的 cluster = ci_stop（目标音符）
+        - ci_stop 之前同弦最近的 cluster = ci_start（起始音符）
+
+    弦号：从 ci_stop 的 positions 里取（目标音符在哪根弦就是哪根弦）。
+
+    参数：
+      positions: list of dict {string_idx: fret_str}，与 cluster_centers 对应。
+                 传入后可精确确定击弦所在弦号。
+
+    返回：
+      hammer_starts: {ci_start: string_idx}  起始音符 cluster → 弦索引（或 None）
+      hammer_stops:  {ci_stop:  string_idx}  目标音符 cluster → 弦索引（或 None）
     """
     if fret_size is None:
         fret_size = _fret_font_size(page)
 
     group_top, group_bottom, string_gap, _ = _group_metrics(string_group)
-    x_tolerance = string_gap * 2.0
-    result = set()
+    # 容差放宽到 4×gap，覆盖 H 字符与音符之间的间距
+    x_tolerance = string_gap * 4.0
+    # overlap_margin：覆盖 H 字符 x0 比 cluster center 略偏左约 2pt 的情况
+    overlap_margin = string_gap * 0.5
+
+    hammer_starts = {}  # ci -> string_idx
+    hammer_stops  = {}  # ci -> string_idx
+
+    # 预先找本行所有击弦弧线
+    arc_lines = _find_hammer_arc_lines(page, string_group)
 
     for c in page.chars:
         if c['text'] != 'H':
@@ -165,10 +223,153 @@ def find_hammer_ons(page, string_group, cluster_centers, fret_size=None):
             continue
         if not _in_annotation_zone(c['top'], group_top, group_bottom, string_gap):
             continue
-        ci = _nearest_cluster(c['x0'], cluster_centers, x_tolerance)
-        if ci is not None:
-            result.add(ci)
-    return result
+
+        ci_start = None
+        ci_stop  = None
+
+        # ── 策略A：找 H 字符附近的弧线，用弧线端点定位起止音符 ──
+        # 弧线应在 H 字符右侧（H 字符在弧线左端左侧），x 范围内
+        nearby_arcs = [
+            a for a in arc_lines
+            if a['x0'] >= c['x0'] - string_gap        # 弧线不能在 H 左侧太远
+            and a['x0'] <= c['x0'] + string_gap * 5   # 弧线在 H 右侧合理范围内
+        ]
+        if nearby_arcs:
+            # 选最近的弧线（弧线左端最接近 H 字符 x0）
+            best_arc = min(nearby_arcs, key=lambda a: abs(a['x0'] - c['x0']))
+            # 弧线左端左侧最近的 cluster = ci_start
+            ci_start = _cluster_left_of(best_arc['x0'] + overlap_margin,
+                                        cluster_centers, x_tolerance)
+            # 弧线右端右侧最近的 cluster = ci_stop
+            ci_stop  = _cluster_right_of(best_arc['x1'] - overlap_margin,
+                                         cluster_centers, x_tolerance)
+            # 验证：击弦必须是低品→高品（升序），若降序则是勾弦弧线，放弃策略A
+            # 若 ci_start=None（弧线左端找不到 cluster），也放弃策略A的 ci_stop
+            if ci_start is None:
+                ci_stop = None
+            elif (ci_stop is not None
+                    and positions is not None
+                    and ci_start < len(positions) and ci_stop < len(positions)):
+                # 取两端的弦号（取最小弦号）
+                s_start = min((k for k in positions[ci_start] if k != '_tied'), default=None)
+                s_stop  = min((k for k in positions[ci_stop]  if k != '_tied'), default=None)
+                if s_start is not None and s_stop is not None:
+                    try:
+                        fret_a = int(positions[ci_start].get(s_start, ''))
+                        fret_b = int(positions[ci_stop ].get(s_stop,  ''))
+                        if fret_a >= fret_b:
+                            # 降序或相等 → 勾弦弧线，放弃策略A结果
+                            ci_start = None
+                            ci_stop  = None
+                    except (ValueError, TypeError):
+                        pass
+
+        # ── 策略B（回退）：用 H 字符 x0 定位目标音符 ──
+        if ci_stop is None:
+            ci_stop = _cluster_right_of(c['x0'] - overlap_margin,
+                                        cluster_centers, x_tolerance)
+        if ci_stop is None:
+            continue
+
+        # ── 确定弦号：从 ci_stop 的 positions 里取 ──
+        string_idx = None
+        if positions is not None and ci_stop < len(positions):
+            stop_strings = set(k for k in positions[ci_stop].keys() if k != '_tied')
+            if stop_strings:
+                string_idx = min(stop_strings)
+
+        # ── 策略B 修正：若 ci_stop 的 fret 比下一个同弦 cluster 的 fret 小，
+        #    说明 H 字符 x0 在起始音符左侧（而非目标音符左侧），需向右移一位 ──
+        if (ci_start is None and string_idx is not None
+                and positions is not None
+                and ci_stop + 1 < len(positions)):
+            stop_fret_str = positions[ci_stop].get(string_idx, '')
+            # 找 ci_stop 右侧第一个同弦 cluster
+            next_ci = None
+            for ci_cand in range(ci_stop + 1, len(positions)):
+                if string_idx in positions[ci_cand]:
+                    next_ci = ci_cand
+                    break
+            if next_ci is not None:
+                next_fret_str = positions[next_ci].get(string_idx, '')
+                try:
+                    stop_fret_val = int(stop_fret_str)
+                    next_fret_val = int(next_fret_str)
+                    # 击弦是低品→高品，若 ci_stop 的 fret < next_ci 的 fret，
+                    # 说明 ci_stop 是起始音符，需向右移一位
+                    if stop_fret_val < next_fret_val:
+                        ci_start = ci_stop
+                        ci_stop  = next_ci
+                        # 更新 string_idx（从新 ci_stop 取）
+                        new_stop_strings = set(k for k in positions[ci_stop].keys()
+                                               if k != '_tied')
+                        if new_stop_strings:
+                            string_idx = min(new_stop_strings)
+                except (ValueError, TypeError):
+                    pass
+
+        # ── 确定 ci_start（若策略A和修正均未找到）──
+        if ci_start is None:
+            if positions is not None and string_idx is not None:
+                # 从 ci_stop - 1 往左找，找到第一个在 string_idx 弦上有音符的 cluster
+                for ci_cand in range(ci_stop - 1, -1, -1):
+                    cand_strings = set(k for k in positions[ci_cand].keys()
+                                       if k != '_tied')
+                    if string_idx in cand_strings:
+                        ci_start = ci_cand
+                        break
+            if ci_start is None:
+                ci_start = ci_stop - 1
+
+        # ── 最终修正：若 ci_start < 0，说明 H 字符 x0 在第一个 cluster 左侧，
+        #    此时 ci_stop 可能是 "高→低→高" 序列中的第一个高品（不是击弦的起始/目标）。
+        #    尝试找 ci_stop 右侧的两个同弦 cluster，若它们构成 低→高 的击弦模式，则使用它们。
+        if ci_start is not None and ci_start < 0:
+            if positions is not None and string_idx is not None:
+                # 找 ci_stop 右侧第一个同弦 cluster（ci_next1）
+                ci_next1 = None
+                for ci_cand in range(ci_stop + 1, len(positions)):
+                    if string_idx in positions[ci_cand]:
+                        ci_next1 = ci_cand
+                        break
+                # 找 ci_next1 右侧第一个同弦 cluster（ci_next2）
+                ci_next2 = None
+                if ci_next1 is not None:
+                    for ci_cand in range(ci_next1 + 1, len(positions)):
+                        if string_idx in positions[ci_cand]:
+                            ci_next2 = ci_cand
+                            break
+                # 若 ci_next1 和 ci_next2 构成 低→高 的击弦模式，使用它们
+                if ci_next1 is not None and ci_next2 is not None:
+                    try:
+                        fret1 = int(positions[ci_next1].get(string_idx, ''))
+                        fret2 = int(positions[ci_next2].get(string_idx, ''))
+                        if fret1 < fret2:
+                            ci_start = ci_next1
+                            ci_stop  = ci_next2
+                        else:
+                            # ci_next1→ci_next2 不是升序，退而使用 ci_stop→ci_next1
+                            ci_start = ci_stop
+                            ci_stop  = ci_next1
+                    except (ValueError, TypeError):
+                        ci_start = ci_stop
+                        ci_stop  = ci_next1 if ci_next1 is not None else ci_stop + 1
+                elif ci_next1 is not None:
+                    # 只有一个右侧 cluster，直接用 ci_stop→ci_next1
+                    ci_start = ci_stop
+                    ci_stop  = ci_next1
+                else:
+                    ci_start = None  # 找不到，放弃
+            else:
+                ci_start = None  # 找不到，放弃
+
+        if ci_start is None or ci_start < 0 or ci_start >= ci_stop:
+            continue
+
+        hammer_starts[ci_start] = string_idx
+        hammer_stops[ci_stop]   = string_idx
+
+    return hammer_starts, hammer_stops
 
 
 # ─────────────────────────────────────────────
@@ -1024,10 +1225,12 @@ def collect_techniques(page, string_group, cluster_centers, positions=None):
 
     返回：dict，key=cluster_idx，value=dict of technique flags
       {
-          'hammer_on':    bool,
+          'hammer_on':    bool,         # 兼容旧字段（True 表示该 cluster 是击弦起始）
+          'hammer_start': int | None,   # 击弦起始音符所在弦索引（0-based），None 表示未知
+          'hammer_stop':  int | None,   # 击弦目标音符所在弦索引（0-based），None 表示未知
           'pull_off':     bool,
-          'slide_start':  int | None,  # 滑弦起始音符所在弦索引（0-based），None 表示未知
-          'slide_stop':   int | None,  # 滑弦目标音符所在弦索引（0-based），None 表示未知
+          'slide_start':  int | None,   # 滑弦起始音符所在弦索引（0-based），None 表示未知
+          'slide_stop':   int | None,   # 滑弦目标音符所在弦索引（0-based），None 表示未知
           'grace_note':   bool,
           'grace_frets':  list of {'string': int, 'fret': int} | None,
           'tie':          str | None,
@@ -1036,7 +1239,11 @@ def collect_techniques(page, string_group, cluster_centers, positions=None):
     """
     fret_size = _fret_font_size(page)
 
-    hammer_ons = find_hammer_ons(page, string_group, cluster_centers, fret_size)
+    # find_hammer_ons 返回两个 dict：{ci: string_idx}
+    # 传入 positions 以便从目标音符的弦位置推断击弦所在弦号
+    hammer_starts, hammer_stops = find_hammer_ons(
+        page, string_group, cluster_centers, fret_size, positions=positions
+    )
     pull_off_chars = find_hammer_pull_chars(page, string_group, cluster_centers, fret_size)
     # find_slides 返回两个 dict：{ci: string_idx}
     # 其中 string_idx 是滑弦所在弦（0-based），None 表示未能确定
@@ -1055,18 +1262,22 @@ def collect_techniques(page, string_group, cluster_centers, positions=None):
     # 勾弦：字母 P 或 弧线 均算
     pull_offs = pull_off_chars | pull_off_curves
 
-    all_cis = (hammer_ons | pull_offs | set(slide_starts.keys()) | set(slide_stops.keys())
+    all_cis = (set(hammer_starts.keys()) | set(hammer_stops.keys())
+               | pull_offs
+               | set(slide_starts.keys()) | set(slide_stops.keys())
                | grace_notes | set(grace_frets.keys()) | set(ties.keys()) | set(tuplets.keys()))
     result = {}
     for ci in all_cis:
         result[ci] = {
-            'hammer_on':   ci in hammer_ons,
-            'pull_off':    ci in pull_offs,
-            'slide_start': slide_starts.get(ci),   # int | None
-            'slide_stop':  slide_stops.get(ci),    # int | None
-            'grace_note':  ci in grace_notes,
-            'grace_frets': grace_frets.get(ci),
-            'tie':         ties.get(ci),
-            'tuplet':      tuplets.get(ci),
+            'hammer_on':    ci in hammer_starts,          # 兼容旧字段
+            'hammer_start': hammer_starts.get(ci),        # int | None
+            'hammer_stop':  hammer_stops.get(ci),         # int | None
+            'pull_off':     ci in pull_offs,
+            'slide_start':  slide_starts.get(ci),         # int | None
+            'slide_stop':   slide_stops.get(ci),          # int | None
+            'grace_note':   ci in grace_notes,
+            'grace_frets':  grace_frets.get(ci),
+            'tie':          ties.get(ci),
+            'tuplet':       tuplets.get(ci),
         }
     return result

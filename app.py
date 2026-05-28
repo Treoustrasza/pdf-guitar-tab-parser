@@ -5,11 +5,18 @@ Flask 后端：PDF 吉他六线谱 → MusicXML 在线转换服务
 import os
 import uuid
 import threading
-from flask import Flask, request, jsonify, send_file, render_template, Response
+from flask import Flask, request, jsonify, send_file, render_template, Response, send_from_directory
 from tab_parser import convert_pdf_to_musicxml, parse_tab_page
 import pdfplumber
 
 app = Flask(__name__)
+
+# 本地托管 alphaTab（已打补丁），避免使用 CDN 未修改版本
+ALPHATAB_DIST = os.path.join(os.path.dirname(__file__), 'node_modules', '@coderline', 'alphatab', 'dist')
+
+@app.route('/local/alphatab/<path:filename>')
+def serve_alphatab(filename):
+    return send_from_directory(ALPHATAB_DIST, filename)
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
 OUTPUT_FOLDER = os.path.join(os.path.dirname(__file__), 'outputs')

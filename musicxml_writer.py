@@ -161,7 +161,8 @@ def _pitch_element(parent, string_num, fret_num):
 
 
 def _note_element(measure_el, string_num, fret_num, duration_name,
-                  is_chord=False, is_rest=False, techniques=None, is_first_note=True):
+                  is_chord=False, is_rest=False, techniques=None, is_first_note=True,
+                  grace_hammer_stop_strings=None):
     """
     在 measure_el 下添加一个 <note> 元素。
     string_num: 1-6（MusicXML 弦号，1=最高音弦）
@@ -172,6 +173,7 @@ def _note_element(measure_el, string_num, fret_num, duration_name,
     techniques: dict，包含 hammer_on/pull_off/slide/grace_note 标志
     is_first_note: True 表示该 beat 的第一个音符（写全部技法），
                    False 表示和弦音符（只写 slide，其他技法不重复）
+    grace_hammer_stop_strings: set of 0-based 弦索引，表示该音符是 grace note 击弦的目标音符
     """
     xml_type, divs, dotted = DURATION_TO_XML.get(
         duration_name, ('quarter', 16, False)
@@ -211,10 +213,13 @@ def _note_element(measure_el, string_num, fret_num, duration_name,
         notations = SubElement(note, 'notations')
 
         # <tied> 元素（notations 级别，影响显示）——同上，每个音符都写
+        # 例外：grace hammer 目标音符若同时是 tie start，不写 <tied type="start">，
+        # 避免 alphaTab 在 hammer-on 弧线之外再渲染一条 tie 弧线（导致双重弧线）
+        _is_grace_hammer_stop = bool(grace_hammer_stop_strings and (string_num - 1) in grace_hammer_stop_strings)
         if tie_type:
             if tie_type in ('stop', 'start_stop'):
                 SubElement(notations, 'tied', type='stop')
-            if tie_type in ('start', 'start_stop'):
+            if tie_type in ('start', 'start_stop') and not _is_grace_hammer_stop:
                 SubElement(notations, 'tied', type='start')
 
         # <slide> 元素（notations 直接子元素，alphaTab/_parseSlide 在此层级读取）
@@ -225,27 +230,59 @@ def _note_element(measure_el, string_num, fret_num, duration_name,
             note_string_idx = string_num - 1  # 1-based 转 0-based
             slide_start_val = techniques.get('slide_start')
             slide_stop_val  = techniques.get('slide_stop')
+            slur_start_num  = techniques.get('slur_start_num')  # int slur number 或 None
+            slur_stop_num   = techniques.get('slur_stop_num')   # int slur number 或 None
             # 只有明确的 int 弦索引才写，None 表示未能确定弦号，跳过
             if isinstance(slide_start_val, int) and note_string_idx == slide_start_val:
                 slide_el = SubElement(notations, 'slide', number='1', type='start')
                 slide_el.set('line-type', 'solid')
+                # 同时写 <slur type="start"> 连音线（像原 PDF 那样用弧线连接两个音符）
+                if slur_start_num is not None:
+                    SubElement(notations, 'slur',
+                               number=str(slur_start_num), type='start', placement='above')
             if isinstance(slide_stop_val, int) and note_string_idx == slide_stop_val:
                 slide_el = SubElement(notations, 'slide', number='1', type='stop')
                 slide_el.set('line-type', 'solid')
+                # 同时写 <slur type="stop"> 连音线
+                if slur_stop_num is not None:
+                    SubElement(notations, 'slur',
+                               number=str(slur_stop_num), type='stop')
 
         # <tuplet> 元素（连音组显示标记，仅在起始音符上写 start）
         if tuplet_info:
             SubElement(notations, 'tuplet', type='start', number='1')
 
+        # grace note 击弦的目标音符：写 <slur type="stop">
+        # alphaTab 通过 slur 弧线自动渲染 H 标记（升序弦显示 H，降序弦显示 P）
+        note_string_idx = string_num - 1  # 1-based 转 0-based
+        if grace_hammer_stop_strings and note_string_idx in grace_hammer_stop_strings:
+            slur_num_stop = grace_hammer_stop_strings[note_string_idx]
+            SubElement(notations, 'slur', number=str(slur_num_stop), type='stop')
+
         technical = SubElement(notations, 'technical')
         SubElement(technical, 'string').text = str(string_num)
         SubElement(technical, 'fret').text = str(fret_num)
 
-        # 技法标注（hammer-on / pull-off 在 <technical> 里，只写在第一个音符上）
-        if techniques and is_first_note:
-            if techniques.get('hammer_on'):
+        # 技法标注（hammer-on / pull-off 在 <technical> 里）
+        # 注意：CDN 版 alphaTab 看到任何 <hammer-on> 标签（不管 type="start/stop"）
+        # 都会设置 isHammerPullOrigin=true，导致目标音符再次触发击弦链。
+        # 因此 grace hammer 目标音符只靠 <slur stop> 渲染弧线，不写 <hammer-on stop>。
+        if grace_hammer_stop_strings and note_string_idx in grace_hammer_stop_strings:
+            pass  # slur stop 已在上方写入，不写 hammer-on stop
+        elif techniques:
+            hammer_start_val = techniques.get('hammer_start')
+            hammer_stop_val  = techniques.get('hammer_stop')
+            # hammer_start：新格式（int 弦索引）
+            if isinstance(hammer_start_val, int) and note_string_idx == hammer_start_val:
                 SubElement(technical, 'hammer-on', number='1', type='start').text = 'H'
-            if techniques.get('pull_off'):
+            elif hammer_stop_val is None and techniques.get('hammer_on') and is_first_note:
+                # 兼容旧格式：只有 hammer_on=True 但无 hammer_start/stop 时，写 start
+                SubElement(technical, 'hammer-on', number='1', type='start').text = 'H'
+            if isinstance(hammer_stop_val, int) and note_string_idx == hammer_stop_val:
+                SubElement(technical, 'hammer-on', number='1', type='stop').text = 'H'
+            # pull-off：同理
+            pull_off_val = techniques.get('pull_off')
+            if pull_off_val and is_first_note:
                 SubElement(technical, 'pull-off', number='1', type='start').text = 'P'
 
     return note
@@ -280,6 +317,30 @@ def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100,
     all_measures = []
     for row in all_measures_by_row:
         all_measures.extend(row)
+
+    # ── 预处理：为每对 slide_start/stop 分配 slur number（1-6 循环）──
+    # 遍历所有 beats，找到 slide_start，分配 slur number；
+    # 再找对应的 slide_stop（同弦索引的下一个 stop），分配同一 number。
+    # 使用简单的"先来先服务"策略：遇到 start 分配 number，遇到 stop 释放 number。
+    # 用 list 包装计数器，以便在嵌套循环（grace note 击弦）中也能修改
+    _slur_counter = [0]        # 全局递增，取模 6 得到 1-6
+    _active_slurs = {}         # string_idx -> slur_number（已开始但未结束的 slur）
+    for measure_beats in all_measures:
+        for beat in measure_beats:
+            techs = beat.get('techniques')
+            if not techs:
+                continue
+            slide_start_val = techs.get('slide_start')
+            slide_stop_val  = techs.get('slide_stop')
+            if isinstance(slide_start_val, int):
+                _slur_counter[0] += 1
+                slur_num = (_slur_counter[0] - 1) % 6 + 1  # 1-6
+                techs['slur_start_num'] = slur_num
+                _active_slurs[slide_start_val] = slur_num
+            if isinstance(slide_stop_val, int):
+                slur_num = _active_slurs.pop(slide_stop_val, None)
+                if slur_num is not None:
+                    techs['slur_stop_num'] = slur_num
 
     # ── 根元素 ──
     score = Element('score-partwise', version='4.0')
@@ -467,6 +528,11 @@ def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100,
                     if note_s_idx == slide_start_val:
                         slide_el = SubElement(notations_g, 'slide', number='1', type='start')
                         slide_el.set('line-type', 'solid')
+                        # grace note 的 slur start
+                        slur_num_g = beat_techniques.get('slur_start_num')
+                        if slur_num_g is not None:
+                            SubElement(notations_g, 'slur',
+                                       number=str(slur_num_g), type='start', placement='above')
                     technical_g = SubElement(notations_g, 'technical')
                     SubElement(technical_g, 'string').text = str(xml_string)
                     SubElement(technical_g, 'fret').text = str(fret_num)
@@ -476,11 +542,19 @@ def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100,
 
             # 装饰音前置音符（grace notes，来自 grace_frets）
             grace_frets = beat_techniques.get('grace_frets') if beat_techniques else None
+            # 记录哪些弦的 grace note 构成击弦（grace fret < 正常音符 fret）
+            # 值为分配的 slur number（1-6），用于在正常音符上写 slur stop
+            grace_hammer_stop_strings = {}  # {0-based 弦索引: slur_number}
             if grace_frets:
+                # 建立正常音符的弦→品位映射（0-based 弦索引）
+                normal_fret_by_string = {
+                    xml_s - 1: fn for xml_s, fn in string_fret_pairs
+                }
                 # 按弦排序写装饰音音符
                 grace_pairs = sorted(grace_frets, key=lambda e: e['string'])
                 for gi, entry in enumerate(grace_pairs):
-                    xml_string_g = entry['string'] + 1  # 0-based → 1-based
+                    s_idx_g = entry['string']          # 0-based
+                    xml_string_g = s_idx_g + 1         # 1-based
                     fret_g = entry['fret']
                     grace_note = SubElement(measure_el, 'note')
                     if gi > 0:
@@ -493,6 +567,19 @@ def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100,
                     technical_g = SubElement(notations_g, 'technical')
                     SubElement(technical_g, 'string').text = str(xml_string_g)
                     SubElement(technical_g, 'fret').text = str(fret_g)
+                    # 判断是否构成击弦：grace fret < 同弦正常音符 fret
+                    normal_fret = normal_fret_by_string.get(s_idx_g)
+                    if normal_fret is not None and fret_g < normal_fret:
+                        # grace note 是击弦起始：
+                        # 1. 写 hammer-on start（让 alphaTab 知道这是击弦）
+                        SubElement(technical_g, 'hammer-on',
+                                   number='1', type='start').text = 'H'
+                        # 2. 写 slur start（alphaTab 通过 slur 弧线渲染 H 标记）
+                        _slur_counter[0] += 1
+                        slur_num = (_slur_counter[0] - 1) % 6 + 1
+                        SubElement(notations_g, 'slur',
+                                   number=str(slur_num), type='start', placement='above')
+                        grace_hammer_stop_strings[s_idx_g] = slur_num
 
             # 合并 tie 标记到 techniques
             tie_type = beat.get('_tie_type')
@@ -502,12 +589,14 @@ def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100,
 
             # 所有音符都传入 techniques，以便每个音符自己判断是否需要写 <slide>
             # 其他技法（hammer_on/pull_off/tie/tuplet）只写在第一个音符上（is_first_note）
+            # grace_hammer_stop_strings：grace note 击弦目标弦集合，传给每个音符自行判断
             for i, (xml_string, fret_num) in enumerate(string_fret_pairs):
                 _note_element(
                     measure_el, xml_string, fret_num, dur_name,
                     is_chord=(i > 0),
                     techniques=beat_techniques,
-                    is_first_note=(i == 0)
+                    is_first_note=(i == 0),
+                    grace_hammer_stop_strings=grace_hammer_stop_strings
                 )
 
 
