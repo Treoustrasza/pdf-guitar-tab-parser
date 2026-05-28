@@ -370,18 +370,8 @@ def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100,
                 dt_el = SubElement(dir_el, 'direction-type')
                 SubElement(dt_el, 'words').text = td['text']
 
-        # ── sl. 滑弦文字标记 ──
-        # 对本小节内有 slide_start 的 beat 写 <direction><words>sl.</words></direction>
-        if measure_beats:
-            for beat in measure_beats:
-                bt = beat.get('techniques') or {}
-                if isinstance(bt.get('slide_start'), int):
-                    sl_dir = SubElement(measure_el, 'direction', placement='above')
-                    sl_dt = SubElement(sl_dir, 'direction-type')
-                    SubElement(sl_dt, 'words').text = 'sl.'
-                    break  # 每小节只写一次
-
         # ── 写音符 ──
+        # 注：sl. 文字标记在写完对应音符后紧接插入，使其定位到滑弦音符正上方
         if not measure_beats:
             # 空小节：填一个全音符休止符
             _rest_element(measure_el, 'whole')
@@ -458,6 +448,11 @@ def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100,
             is_slide_grace = (beat['duration_name'] is None
                               and isinstance(slide_start_val, int))
             if is_slide_grace:
+                # sl. 写在 grace note 之前，alphaTab 会将其对齐到起始音符位置
+                # default-y 正值推到六线谱上方，避免与谱线重叠
+                sl_dir = SubElement(measure_el, 'direction', placement='above')
+                sl_dt = SubElement(sl_dir, 'direction-type')
+                SubElement(sl_dt, 'words', **{'default-y': '60'}).text = 'sl.'
                 for gi, (xml_string, fret_num) in enumerate(string_fret_pairs):
                     grace_note = SubElement(measure_el, 'note')
                     if gi > 0:
@@ -514,6 +509,7 @@ def build_musicxml(all_measures_by_row, title='Guitar Tab', tempo=100,
                     techniques=beat_techniques,
                     is_first_note=(i == 0)
                 )
+
 
     return ElementTree(score)
 
