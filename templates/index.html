@@ -133,7 +133,7 @@
       border-radius: 2px;
       padding: 36px 40px 40px;
       width: 100%;
-      max-width: 540px;
+      max-width: 720px;
       box-shadow:
         4px 6px 0 rgba(100,80,60,0.08),
         0 2px 24px var(--shadow),
@@ -174,6 +174,34 @@
       border-radius: 1px;
       backdrop-filter: blur(1px);
     }
+
+    /* ── 上传区折叠动画 ── */
+    #upload-section {
+      overflow: hidden;
+      transition: max-height 0.4s ease, opacity 0.3s ease, margin 0.3s ease;
+      max-height: 600px;
+      opacity: 1;
+    }
+    #upload-section.collapsed {
+      max-height: 0;
+      opacity: 0;
+      margin: 0;
+      pointer-events: none;
+    }
+    /* 折叠后显示的摘要行 */
+    #upload-summary {
+      display: none;
+      margin-bottom: 14px;
+      font-size: 0.82rem;
+      color: var(--text-dim);
+      font-style: italic;
+      letter-spacing: 0.3px;
+      cursor: pointer;
+      text-decoration: underline;
+      text-decoration-style: dotted;
+      text-underline-offset: 3px;
+    }
+    #upload-summary:hover { color: var(--text); }
 
     /* ── 拖拽区域 ── */
     #drop-zone {
@@ -400,7 +428,7 @@
       left: 50%;
       transform: translateX(-50%);
       width: 100vw;
-      max-width: 1400px;
+      max-width: 1600px;
       margin-top: 28px;
       display: none;
       flex-direction: column;
@@ -548,31 +576,37 @@
   <div class="card">
     <div class="tape"></div>
 
-    <!-- 拖拽上传 -->
-    <div id="drop-zone">
-      <input type="file" id="file-input" accept=".pdf" />
-      <span class="drop-icon">🎼</span>
-      <div class="drop-label">
-        将 PDF 文件拖拽至此<br>
-        或 <span>点击选择文件</span>
-      </div>
-      <div id="file-name"></div>
-    </div>
+    <!-- 折叠后摘要 -->
+    <div id="upload-summary">↳ 点击重新选择文件</div>
 
-    <!-- 参数 -->
-    <div class="params">
-      <div class="param-group">
-        <label for="title-input">曲目标题</label>
-        <input type="text" id="title-input" placeholder="留空则从文件名提取" />
+    <!-- 上传区（可折叠） -->
+    <div id="upload-section">
+      <!-- 拖拽上传 -->
+      <div id="drop-zone">
+        <input type="file" id="file-input" accept=".pdf" />
+        <span class="drop-icon">🎼</span>
+        <div class="drop-label">
+          将 PDF 文件拖拽至此<br>
+          或 <span>点击选择文件</span>
+        </div>
+        <div id="file-name"></div>
       </div>
-      <div class="param-group" style="max-width:100px">
-        <label for="tempo-input">速度 BPM</label>
-        <input type="number" id="tempo-input" value="100" min="20" max="300" />
-      </div>
-    </div>
 
-    <!-- 转换按钮 -->
-    <button id="convert-btn" disabled>— 选择文件后开始转换 —</button>
+      <!-- 参数 -->
+      <div class="params">
+        <div class="param-group">
+          <label for="title-input">曲目标题</label>
+          <input type="text" id="title-input" placeholder="留空则从文件名提取" />
+        </div>
+        <div class="param-group" style="max-width:100px">
+          <label for="tempo-input">速度 BPM</label>
+          <input type="number" id="tempo-input" value="100" min="20" max="300" />
+        </div>
+      </div>
+
+      <!-- 转换按钮 -->
+      <button id="convert-btn" disabled>— 选择文件后开始转换 —</button>
+    </div>
 
     <!-- 进度 -->
     <div id="progress-area">
@@ -623,13 +657,13 @@
   </div>
 
   <script>
-    const dropZone     = document.getElementById('drop-zone');
-    const fileInput    = document.getElementById('file-input');
-    const fileNameEl   = document.getElementById('file-name');
-    const convertBtn   = document.getElementById('convert-btn');
-    const progressArea = document.getElementById('progress-area');
-    const progressBar  = document.getElementById('progress-bar');
-    const statusText   = document.getElementById('status-text');
+    const dropZone      = document.getElementById('drop-zone');
+    const fileInput     = document.getElementById('file-input');
+    const fileNameEl    = document.getElementById('file-name');
+    const convertBtn    = document.getElementById('convert-btn');
+    const progressArea  = document.getElementById('progress-area');
+    const progressBar   = document.getElementById('progress-bar');
+    const statusText    = document.getElementById('status-text');
     const resultArea    = document.getElementById('result-area');
     const errorArea     = document.getElementById('error-area');
     const resetBtn      = document.getElementById('reset-btn');
@@ -640,6 +674,8 @@
     const previewFrame  = document.getElementById('preview-frame');
     const previewLoad   = document.getElementById('preview-loading');
     const previewToggle = document.getElementById('preview-toggle');
+    const uploadSection = document.getElementById('upload-section');
+    const uploadSummary = document.getElementById('upload-summary');
 
     let selectedFile    = null;
     let currentTaskId   = null;
@@ -755,6 +791,9 @@
       previewFrame.src = `/api/preview/${taskId}`;
     }
 
+    // ── 点击摘要行 = 重置 ──
+    uploadSummary.addEventListener('click', () => resetBtn.click());
+
     // ── 重置 ──
     resetBtn.addEventListener('click', () => {
       selectedFile  = null;
@@ -788,10 +827,17 @@
         convertBtn.textContent = '— 转换完成 —';
         resultArea.style.display = 'flex';
         resetBtn.style.display   = 'inline';
+        // 折叠上传区
+        uploadSection.classList.add('collapsed');
+        uploadSummary.style.display = 'block';
+        uploadSummary.textContent = '↳ ' + (selectedFile ? selectedFile.name : '已上传') + ' · 点击重新上传';
         loadPreview(currentTaskId);
       } else {
         convertBtn.textContent = selectedFile ? '— 开始转换 —' : '— 选择文件后开始转换 —';
         convertBtn.disabled = !selectedFile;
+        // 展开上传区
+        uploadSection.classList.remove('collapsed');
+        uploadSummary.style.display = 'none';
       }
     }
 
