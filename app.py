@@ -13,10 +13,15 @@ app = Flask(__name__)
 
 # 本地托管 alphaTab（已打补丁），避免使用 CDN 未修改版本
 ALPHATAB_DIST = os.path.join(os.path.dirname(__file__), 'node_modules', '@coderline', 'alphatab', 'dist')
+STATIC_DIR    = os.path.join(os.path.dirname(__file__), 'static')
 
 @app.route('/local/alphatab/<path:filename>')
 def serve_alphatab(filename):
     return send_from_directory(ALPHATAB_DIST, filename)
+
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory(STATIC_DIR, filename)
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
 OUTPUT_FOLDER = os.path.join(os.path.dirname(__file__), 'outputs')
@@ -152,6 +157,27 @@ def get_musicxml(task_id):
         mimetype='application/vnd.recordare.musicxml+xml',
         as_attachment=False,
     )
+
+
+@app.route('/api/example')
+def example():
+    """直接触发示例文件（Immature.pdf）的转换任务"""
+    import shutil
+    example_path = os.path.join(STATIC_DIR, 'Immature.pdf')
+    if not os.path.exists(example_path):
+        return jsonify({'error': '示例文件不存在'}), 404
+    task_id    = str(uuid.uuid4())
+    pdf_path   = os.path.join(UPLOAD_FOLDER, f'{task_id}.pdf')
+    output_path = os.path.join(OUTPUT_FOLDER, f'{task_id}.musicxml')
+    shutil.copy(example_path, pdf_path)
+    tasks[task_id] = {'status': 'pending'}
+    t = threading.Thread(
+        target=run_conversion,
+        args=(task_id, pdf_path, output_path, 'Immature', 96),
+        daemon=True,
+    )
+    t.start()
+    return jsonify({'task_id': task_id})
 
 
 @app.route('/api/dev/inject_task', methods=['POST'])

@@ -290,6 +290,27 @@
     input::placeholder { color: var(--text-faint); font-style: italic; }
     input:focus { border-bottom-color: var(--pink); background: rgba(212,130,154,0.05); }
 
+    /* ── 示例按钮 ── */
+    #example-btn {
+      margin-top: 14px;
+      width: 100%;
+      padding: 9px;
+      border: 1.5px dashed var(--border);
+      border-radius: 1px;
+      background: transparent;
+      color: var(--text-faint);
+      font-size: 0.82rem;
+      font-family: 'Special Elite', 'Noto Serif SC', serif;
+      letter-spacing: 1.5px;
+      cursor: pointer;
+      transition: color 0.2s, border-color 0.2s, background 0.2s;
+    }
+    #example-btn:hover {
+      color: var(--lavender);
+      border-color: var(--lavender);
+      background: rgba(155,142,196,0.06);
+    }
+
     /* ── 转换按钮 ── */
     #convert-btn {
       margin-top: 26px;
@@ -600,6 +621,9 @@
         </div>
       </div>
 
+      <!-- 示例按钮 -->
+      <button id="example-btn">♪ 加载示例：Immature（指弹改编）</button>
+
       <!-- 转换按钮 -->
       <button id="convert-btn" disabled>— 选择文件后开始转换 —</button>
     </div>
@@ -673,6 +697,8 @@
     const uploadSection = document.getElementById('upload-section');
     const uploadSummary = document.getElementById('upload-summary');
 
+    const exampleBtn    = document.getElementById('example-btn');
+
     let selectedFile    = null;
     let currentTaskId   = null;
     let pollTimer       = null;
@@ -705,6 +731,24 @@
       convertBtn.disabled = false;
       hideError();
     }
+
+    // ── 加载示例 ──
+    exampleBtn.addEventListener('click', async () => {
+      hideError();
+      setUIState('processing');
+      try {
+        const res  = await fetch('/api/example');
+        const data = await res.json();
+        if (!res.ok) { showError(data.error || '示例加载失败'); setUIState('idle'); return; }
+        currentTaskId = data.task_id;
+        // 折叠上传区，显示示例文件名
+        selectedFile = { name: 'Immature（指弹改编）.pdf' };
+        pollStatus();
+      } catch (e) {
+        showError('网络错误：' + e.message);
+        setUIState('idle');
+      }
+    });
 
     // ── 转换 ──
     convertBtn.addEventListener('click', async () => {
