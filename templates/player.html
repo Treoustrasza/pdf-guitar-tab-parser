@@ -265,7 +265,7 @@
       core: {
         // Worker 需要完整 URL，用 location.origin 拼接本地路径
         scriptFile: location.origin + '/local/alphatab/alphaTab.min.js',
-        fontDirectory: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/font/',
+        fontDirectory: location.origin + '/local/alphatab/font/',
       },
       display: {
         layoutMode: alphaTab.LayoutMode.Page,
@@ -280,7 +280,7 @@
         enableCursor: true,
         enableUserInteraction: true,
         // SoundFont：使用 alphaTab 官方提供的免费 SoundFont
-        soundFont: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/soundfont/sonivox.sf2',
+        soundFont: location.origin + '/local/alphatab/soundfont/sonivox.sf2',
         scrollMode: alphaTab.ScrollMode.Continuous,
       },
     });
