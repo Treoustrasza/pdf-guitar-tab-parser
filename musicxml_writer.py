@@ -199,8 +199,8 @@ def _note_element(measure_el, string_num, fret_num, duration_name,
         SubElement(tm, 'actual-notes').text = str(tuplet_info['actual'])
         SubElement(tm, 'normal-notes').text = str(tuplet_info['normal'])
 
-    # <tie> 元素（音符级别，影响播放）（只写在第一个音符上）
-    tie_type = (techniques.get('tie') if techniques else None) if is_first_note else None
+    # <tie> 元素（音符级别，影响播放）——和弦每个音符都需要写，否则 alphaTab 只隐藏第一根弦的品位数字
+    tie_type = (techniques.get('tie') if techniques else None)
     if tie_type and not is_rest:
         if tie_type in ('start', 'start_stop'):
             SubElement(note, 'tie', type='start')
@@ -210,7 +210,7 @@ def _note_element(measure_el, string_num, fret_num, duration_name,
     if not is_rest:
         notations = SubElement(note, 'notations')
 
-        # <tied> 元素（notations 级别，影响显示）（只写在第一个音符上）
+        # <tied> 元素（notations 级别，影响显示）——同上，每个音符都写
         if tie_type:
             if tie_type in ('stop', 'start_stop'):
                 SubElement(notations, 'tied', type='stop')
