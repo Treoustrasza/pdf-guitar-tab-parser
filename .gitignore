@@ -2,5 +2,11 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+
+# 运行时生成的上传/输出文件
 uploads/
 outputs/
+
+# Node.js 依赖（alphaTab，本地打补丁后不需要提交）
+node_modules/
+package-lock.json

@@ -1,0 +1,23 @@
+{
+  "name": "tab_demo",
+  "version": "1.0.0",
+  "description": "---\r title: PDF Guitar Tab Parser\r emoji: 🎸\r colorFrom: pink\r colorTo: purple\r sdk: docker\r pinned: false\r ---",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Treoustrasza/pdf-guitar-tab-parser.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Treoustrasza/pdf-guitar-tab-parser/issues"
+  },
+  "homepage": "https://github.com/Treoustrasza/pdf-guitar-tab-parser#readme",
+  "dependencies": {
+    "@coderline/alphatab": "^1.8.3"
+  }
+}
